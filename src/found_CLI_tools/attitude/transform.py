@@ -1,14 +1,15 @@
 from scipy.spatial.transform import Rotation
-from common.constants import ROTATION_ORDER, ANGLE_NORM
+from found_CLI_tools.attitude.constants import ROTATION_ORDER, ANGLE_NORM
+
 
 class Attitude:
     """Represents an attitude in the celestial sphere (using modified Euler Angles)
-    
+
     Note:
         We use degrees here
     """
 
-    def __init__(self, ra: float, de: float, roll: float): # pyright: ignore[reportRedeclaration]
+    def __init__(self, ra: float, de: float, roll: float):  # pyright: ignore[reportRedeclaration]
         """Creates an Attitude object
 
         Args:
@@ -41,7 +42,11 @@ class Attitude:
         Returns:
             DCM: The resulting DCM
         """
-        return  DCM(Rotation.from_euler(ROTATION_ORDER, [self.ra, -self.de, -self.roll], degrees=True))
+        return DCM(
+            Rotation.from_euler(
+                ROTATION_ORDER, [self.ra, -self.de, -self.roll], degrees=True
+            )
+        )
 
     def to_generator_format(self) -> str:
         """Provides the string representation for the tools.generator CLI
@@ -57,12 +62,12 @@ class Attitude:
         Returns:
             str: The string to pass to the FOUND CLI
         """
-        return f"\"{self.to_generator_format()}\""
+        return f'"{self.to_generator_format()}"'
+
 
 class DCM:
-    """Represents a Rotation/Orthonormal Basis
-    """
-    
+    """Represents a Rotation/Orthonormal Basis"""
+
     def __init__(self, rotation: Rotation = None):
         """Constructs a DCM from a scipy Rotation
 

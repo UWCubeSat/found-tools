@@ -6,6 +6,12 @@ dist/
 wheels/
 *.egg-info
 
+# Test generate files
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
 # Virtual environments
 .venv
 
