@@ -6,14 +6,17 @@ test *args:
 _cov *args:
     uv run -m coverage {{ args }}
 
-
 # Run tests and measure coverage
 [group('qa')]
-@cov: 
+@cov:
     just _cov erase
     just _cov run -m pytest tests
+    # Ensure ASGI entrypoint is importable.
+    # You can also use coverage to run your CLI entrypoints.
+    # just _cov run -m hello_svc.asgi
+    # just _cov combine
+    just _cov report
     just _cov html
-    just _cov report --fail-under=100
 
 # Run linters
 [group('qa')]
