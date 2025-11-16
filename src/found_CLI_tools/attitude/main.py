@@ -221,7 +221,11 @@ def output_result(
             print()
 
 
-if __name__ == "__main__":
+def main():
     arguments = parse_args()
     dcms = produce_attitudes(*arguments)
     output_result(arguments[-2], *dcms)
+
+
+if __name__ == "__main__":
+    main()
