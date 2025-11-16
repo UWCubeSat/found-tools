@@ -128,16 +128,16 @@ def produce_attitudes(
 
 
 def output_result(
-    calibration_attitude: DCM,
-    calibration_attitudes: Tuple[DCM, DCM],
-    test_attitudes: List[Tuple[DCM, DCM]],
+    calibration_dcm: DCM,
+    calibration_dcms: Tuple[DCM, DCM],
+    test_dcms: List[Tuple[DCM, DCM]],
 ):
     """Outputs the results
 
     Args:
-        calibration_attitude (DCM): The calibration rotation
-        calibration_attitudes (Tuple[DCM, DCM]): The attitudes to use for calibration
-        test_attitudes (List[Tuple[DCM, DCM]]): The attitudes to use for distance
+        calibration_dcm (DCM): The calibration rotation
+        calibration_dcms (Tuple[DCM, DCM]): The attitudes to use for calibration
+        test_dcms (List[Tuple[DCM, DCM]]): The attitudes to use for distance
     """
     # Define constants
 
@@ -183,14 +183,15 @@ def output_result(
         print(distance_cmd)
 
     # Convert everything to Attitude
-    calibration_attitude = calibration_attitude.to_attitude()
+    calibration_attitude = calibration_dcm.to_attitude()
     calibration_attitudes = (
-        calibration_attitudes[0].to_attitude(),
-        calibration_attitudes[1].to_attitude(),
+        calibration_dcms[0].to_attitude(),
+        calibration_dcms[1].to_attitude(),
     )
-    for i in range(len(test_attitudes)):
-        loc_attitude, ref_attitude = test_attitudes[i]
-        test_attitudes[i] = loc_attitude.to_attitude(), ref_attitude.to_attitude()
+    test_attitudes = []
+    for i in range(len(test_dcms)):
+        loc_dcm, ref_dcm = test_dcms[i]
+        test_attitudes.append((loc_dcm.to_attitude(), ref_dcm.to_attitude()))
 
     # Define Calibration Command
     CALIBRATION_COMMAND = (
@@ -222,5 +223,5 @@ def output_result(
 
 if __name__ == "__main__":
     arguments = parse_args()
-    attitudes = produce_attitudes(*arguments)
-    output_result(arguments[-2], *attitudes)
+    dcms = produce_attitudes(*arguments)
+    output_result(arguments[-2], *dcms)
