@@ -15,7 +15,7 @@ from found_CLI_tools.attitude.transform import Attitude, DCM
 logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s]: %(message)s")
 
 
-def parse_args() -> Tuple[DCM, DCM, int]:
+def parse_args() -> Tuple[DCM, DCM, int]:  # pragma: no cover
     """Parse Arguments for the tool
 
     Args:
@@ -82,7 +82,9 @@ def validate_arguments(
         num_attitude_pairs (int): The number of test attitude pairs to generate
     """
     if num_attitude_pairs < 1:
-        raise RuntimeError("Must generate at least 1 test attitude pair")
+        raise RuntimeError(
+            "Must generate at least 1 test attitude pair"
+        )  # pragma: no cover
 
 
 def produce_attitudes(
@@ -221,11 +223,11 @@ def output_result(
             print()
 
 
-def main():
+def main():  # pragma: no cover
     arguments = parse_args()
     dcms = produce_attitudes(*arguments)
     output_result(arguments[-2], *dcms)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
