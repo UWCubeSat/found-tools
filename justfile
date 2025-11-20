@@ -29,3 +29,8 @@ typing:
 # Perform all checks
 [group('qa')]
 check-all: lint cov typing
+
+# Remove all __pycache__ folders
+[group('maintenance')]
+clean-pycache:
+    find . -type d -name "__pycache__" -prune -exec rm -rf {} +
