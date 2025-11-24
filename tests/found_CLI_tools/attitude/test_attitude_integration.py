@@ -36,7 +36,7 @@ class Arguments:
         return self.local_attitude, self.calibration_attitude, self.num_attitude_pairs
 
 
-class IntegrationTest(unittest.TestCase):
+class AttitudeIntegrationTest(unittest.TestCase):
     def assertAttitudesAlmostEqual(self, att1: Attitude, att2: Attitude):
         self.assertAlmostEqual(att1.ra, att2.ra, 2)
         self.assertAlmostEqual(att1.de, att2.de, 2)

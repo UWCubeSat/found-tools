@@ -10,6 +10,7 @@ dependencies = [
 
 [project.scripts]
 found-attitude = "found_CLI_tools.attitude.main:main"
+found-edge-point-gen = "found_CLI_tools.edge_point_gen.main:main"
 
 [dependency-groups]
 dev = ["pytest", "coverage"]
