@@ -40,3 +40,10 @@ class ProjectionTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             generate_edge_point((0.0, 1.0, 5.0), (0.0, 0.0, 1.0), 10.0)
+
+    def test_invalid_vector_type_rejected(self):
+        with self.assertRaises(TypeError):
+            generate_edge_point(0.5, (0.0, 0.0, 0.0, 1.0), 10.0)  # type: ignore[arg-type]
+
+        with self.assertRaises(TypeError):
+            generate_edge_point((0.0, 1.0, 5.0), None, 10.0)  # type: ignore[arg-type]
