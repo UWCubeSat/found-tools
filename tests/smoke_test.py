@@ -28,23 +28,61 @@ def main():
         print(f"Failed to import attitude module: {e}")
         sys.exit(1)
 
-    # Test 3: Check that the main function exists
+    # Test 3: Check that the attitude CLI entry point exists
     try:
         from found_CLI_tools.attitude.main import main as attitude_main
 
         assert callable(attitude_main)
-        print("CLI entry point exists")
+        print("Attitude CLI entry point exists")
     except (ImportError, AssertionError) as e:
-        print(f"CLI entry point not found: {e}")
+        print(f"Attitude CLI entry point not found: {e}")
         sys.exit(1)
 
-    # Test 4: Import key classes
+    # Test 4: Import key attitude classes
     try:
         from found_CLI_tools.attitude.transform import Attitude, DCM  # noqa: F401
 
-        print("Core classes imported successfully")
+        print("Attitude core classes imported successfully")
     except ImportError as e:
-        print(f"Failed to import core classes: {e}")
+        print(f"Failed to import attitude core classes: {e}")
+        sys.exit(1)
+
+    # Test 5: Import generator module and CLI
+    try:
+        from found_CLI_tools import generator  # noqa: F401
+        from found_CLI_tools.generator.__main__ import (  # type: ignore[attr-defined]
+            parse_args,
+        )
+        from found_CLI_tools.generator.spatial.coordinate import (  # noqa: F401
+            Vector,
+            Attitude,
+        )
+        from found_CLI_tools.generator.spatial.camera import Camera  # noqa: F401
+        from found_CLI_tools.generator.curve.spherical import (  # noqa: F401
+            SphericalCurveProvider,
+        )
+        from found_CLI_tools.generator.image.printer import Printer  # noqa: F401
+
+        assert callable(parse_args)
+        print("Generator module, CLI, and core classes imported successfully")
+    except (ImportError, AssertionError) as e:
+        print(f"Failed to import generator CLI or core classes: {e}")
+        sys.exit(1)
+
+    # Test 6: Import noise generator image module and helpers
+    try:
+        from found_CLI_tools import noise_generator_image  # noqa: F401
+        from found_CLI_tools.noise_generator_image import noise  # noqa: F401
+        from found_CLI_tools.noise_generator_image.__main__ import (  # type: ignore[attr-defined]
+            interactive_noise_adjustment,
+            main as noise_cli_main,
+        )
+
+        assert callable(interactive_noise_adjustment)
+        assert callable(noise_cli_main)
+        print("Noise generator image module and CLI entry point imported successfully")
+    except (ImportError, AssertionError) as e:
+        print(f"Failed to import noise generator image CLI: {e}")
         sys.exit(1)
 
     print("\nAll smoke tests passed!")

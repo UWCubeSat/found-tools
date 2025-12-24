@@ -6,10 +6,14 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "scipy>=1.16.3",
+    "opencv-python>=4.0.0",
+    "numpy>=1.20.0",
+    "pycairo>=1.20.0",
 ]
 
 [project.scripts]
 found-attitude = "found_CLI_tools.attitude.main:main"
+noise-generator = "found_CLI_tools.noise_generator_image.cli:main"
 
 [dependency-groups]
 dev = ["pytest", "coverage"]
