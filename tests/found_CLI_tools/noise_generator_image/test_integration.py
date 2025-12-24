@@ -295,7 +295,9 @@ class IntegrationTest(unittest.TestCase):
 
     @patch("sys.argv", ["noise_generator_image", "input.png", "output.png"])
     @patch("src.found_CLI_tools.noise_generator_image.__main__.cv2.imread")
-    @patch("src.found_CLI_tools.noise_generator_image.__main__.interactive_noise_adjustment")
+    @patch(
+        "src.found_CLI_tools.noise_generator_image.__main__.interactive_noise_adjustment"
+    )
     def test_main_module_execution(self, mock_interactive, mock_imread):
         """Test that __main__ block can be executed"""
         import numpy as np
