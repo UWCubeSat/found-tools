@@ -35,9 +35,7 @@ def parse_args() -> Tuple[Vector, Attitude, float, float, float, float, float, s
     Returns:
         Tuple[Vector, Attitude, float, float, float, float, float, str]: The arguments for this program
     """
-    parser = argparse.ArgumentParser(
-        description="Generates artificial images of Earth"
-    )
+    parser = argparse.ArgumentParser(description="Generates artificial images of Earth")
     parser.add_argument(
         "--position",
         nargs=3,
@@ -85,8 +83,9 @@ def parse_args() -> Tuple[Vector, Attitude, float, float, float, float, float, s
     parser.add_argument("--filename", default=None, help="The output file name")
     args = parser.parse_args()
 
-    position, orientation = Vector(*args.position), Attitude(
-        *args.orientation, radians=False
+    position, orientation = (
+        Vector(*args.position),
+        Attitude(*args.orientation, radians=False),
     )
 
     return (
@@ -193,7 +192,7 @@ def generate_points(
         exit(1)
     if len(image_points) != len(camera_points):
         logging.warning(
-            f"{(len(camera_points)-len(image_points)) / len(camera_points) * 100:.2f}% of the horizon is behind the camera"
+            f"{(len(camera_points) - len(image_points)) / len(camera_points) * 100:.2f}% of the horizon is behind the camera"
         )
     logging.info(
         f"{count / len(camera_points) * 100:.2f}% of the horizon is in the camera"

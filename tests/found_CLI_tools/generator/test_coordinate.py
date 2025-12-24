@@ -1,4 +1,9 @@
-from src.found_CLI_tools.generator.spatial.coordinate import Vector, CoordinateSystem, Attitude, CELESTIAL_SYSTEM
+from src.found_CLI_tools.generator.spatial.coordinate import (
+    Vector,
+    CoordinateSystem,
+    Attitude,
+    CELESTIAL_SYSTEM,
+)
 import unittest
 import numpy as np
 

@@ -2,9 +2,17 @@ import unittest
 from unittest.mock import patch
 import numpy as np
 
-from src.found_CLI_tools.generator.spatial.coordinate import Vector, Attitude, CoordinateSystem
+from src.found_CLI_tools.generator.spatial.coordinate import (
+    Vector,
+    Attitude,
+    CoordinateSystem,
+)
 from src.found_CLI_tools.generator.curve.spherical import SphericalCurveProvider
-from src.found_CLI_tools.generator.common.constants import EARTH_RADIUS, DEFAULT_RESOLUTION, DEFAULT_PIXEL_SIZE
+from src.found_CLI_tools.generator.common.constants import (
+    EARTH_RADIUS,
+    DEFAULT_RESOLUTION,
+    DEFAULT_PIXEL_SIZE,
+)
 from src.found_CLI_tools.generator.__main__ import generate_points
 
 
@@ -146,7 +154,10 @@ class IntegrationTest(unittest.TestCase):
         self.assertAlmostEqual(up, len(actual_points) - up)
         self.assertAlmostEqual(left, len(actual_points) - left)
 
-    @patch("src.found_CLI_tools.generator.__main__.exit", side_effect=RuntimeError("Expected"))
+    @patch(
+        "src.found_CLI_tools.generator.__main__.exit",
+        side_effect=RuntimeError("Expected"),
+    )
     def test_cannot_see_earth(self, _):
         position = Vector(EARTH_RADIUS + 10000, 0, 0)
         leo_threshold = 2000000
