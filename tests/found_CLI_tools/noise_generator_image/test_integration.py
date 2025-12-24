@@ -292,3 +292,21 @@ class IntegrationTest(unittest.TestCase):
             result2 = add_salt_pepper_noise(result2, salt, pepper)
             result2 = apply_discretization(result2, levels)
             result2 = apply_motion_blur(result2, kernel)
+
+    @patch("sys.argv", ["noise_generator_image", "input.png", "output.png"])
+    @patch("src.found_CLI_tools.noise_generator_image.__main__.cv2.imread")
+    @patch("src.found_CLI_tools.noise_generator_image.__main__.interactive_noise_adjustment")
+    def test_main_module_execution(self, mock_interactive, mock_imread):
+        """Test that __main__ block can be executed"""
+        import numpy as np
+
+        # Mock image loading
+        mock_imread.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+        mock_interactive.return_value = True
+
+        # Import and call main
+        from src.found_CLI_tools.noise_generator_image.__main__ import main
+
+        result = main()
+        self.assertEqual(result, 0)
+        mock_interactive.assert_called_once()
