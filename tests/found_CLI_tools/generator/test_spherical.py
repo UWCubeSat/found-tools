@@ -2,7 +2,11 @@ import unittest
 import numpy as np
 
 from src.found_CLI_tools.generator.common.constants import EARTH_RADIUS
-from src.found_CLI_tools.generator.spatial.coordinate import Attitude, Vector, CoordinateSystem
+from src.found_CLI_tools.generator.spatial.coordinate import (
+    Attitude,
+    Vector,
+    CoordinateSystem,
+)
 from src.found_CLI_tools.generator.curve.spherical import SphericalCurveProvider
 
 

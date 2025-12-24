@@ -90,6 +90,6 @@ class Printer:
             self.generate_image(...) should've been
             called before this
         """
-        if '.png' in filename:
-            filename = filename[:filename.index('.png')]
+        if ".png" in filename:
+            filename = filename[: filename.index(".png")]
         self.surface.write_to_png(f"{filename}.png")
