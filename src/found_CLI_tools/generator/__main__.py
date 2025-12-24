@@ -3,8 +3,6 @@ import logging
 from pathlib import Path
 from typing import List, Tuple
 
-logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s]: %(message)s")
-
 from found_CLI_tools.generator.common.constants import (
     DEFAULT_FOCAL_LEN,
     DEFAULT_RESOLUTION,
@@ -13,10 +11,12 @@ from found_CLI_tools.generator.common.constants import (
     EARTH_RADIUS,
     NUM_EARTH_POINTS,
 )
-from found_CLI_tools.generator.spatial.coordinate import Attitude, Vector
-from found_CLI_tools.generator.spatial.camera import Camera
 from found_CLI_tools.generator.curve.spherical import SphericalCurveProvider
 from found_CLI_tools.generator.image.printer import Printer
+from found_CLI_tools.generator.spatial.camera import Camera
+from found_CLI_tools.generator.spatial.coordinate import Attitude, Vector
+
+logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s]: %(message)s")
 
 
 def parse_args() -> Tuple[Vector, Attitude, float, float, float, float, float, str]:
@@ -177,7 +177,7 @@ def generate_points(
         camera_center, *camera_points
     )
 
-    if image_center == None:
+    if image_center is None:
         logging.error(
             "The produced image does not capture Earth's edge. Skipping image output."
         )
