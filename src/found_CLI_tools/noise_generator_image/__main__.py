@@ -23,7 +23,6 @@ from found_CLI_tools.noise_generator_image.noise import (
     apply_discretization
 )
 
-
 def interactive_noise_adjustment(base_image, output_path):
     """
     Open an interactive GUI window for real-time noise adjustment.
@@ -59,12 +58,12 @@ def interactive_noise_adjustment(base_image, output_path):
     cv2.createTrackbar('Gaussian Sigma', window_name, 0, 100, nothing)
     cv2.createTrackbar('Salt Prob x1000', window_name, 0, 100, nothing)
     cv2.createTrackbar('Pepper Prob x1000', window_name, 0, 100, nothing)
-    cv2.createTrackbar('Discretization', window_name, 1, 32, nothing)
+    cv2.createTrackbar('Discretization', window_name, 3, 32, nothing)
     cv2.createTrackbar('k1 x100', window_name, 0, 100, nothing)
     cv2.createTrackbar('k2 x100', window_name, 0, 100, nothing)
     cv2.createTrackbar('p1 x100', window_name, 0, 100, nothing)
     cv2.createTrackbar('p2 x100', window_name, 0, 100, nothing)
-    cv2.createTrackbar('Motion Kernel', window_name, 1, 30, nothing)
+    cv2.createTrackbar('Motion Kernel', window_name, 0, 100, nothing)
     
     print("\n=== Interactive Noise Adjustment ===")
     print("Adjust the sliders to modify noise and distortion")
@@ -104,7 +103,7 @@ def interactive_noise_adjustment(base_image, output_path):
             break
         elif key == ord('s') or key == ord('S'):  # Save
             cv2.imwrite(output_path, result)
-            print(f"\n✓ Image saved to: {output_path}")
+            print(f"\nImage saved to: {output_path}")
             print(f"  Gaussian Sigma: {sigma}")
             print(f"  Salt Probability: {salt:.3f}")
             print(f"  Pepper Probability: {pepper:.3f}")
@@ -158,7 +157,7 @@ def main():
         print("Please check that the file exists and is a valid image.")
         return 1
     
-    print(f"✓ Image loaded: {base_image.shape[1]}x{base_image.shape[0]} pixels")
+    print(f"Image loaded: {base_image.shape[1]}x{base_image.shape[0]} pixels")
     print("\nOpening interactive adjustment window...")
     
     # Open interactive GUI
@@ -168,7 +167,6 @@ def main():
         print("\nNo image was saved.")
     
     return 0 if saved else 1
-
 
 if __name__ == '__main__':
     sys.exit(main())
