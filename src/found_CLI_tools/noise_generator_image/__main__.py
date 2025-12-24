@@ -6,9 +6,7 @@ adjust various noise parameters via trackbars in real-time, and save the
 result when satisfied.
 """
 import argparse
-import os
 import sys
-
 import cv2
 
 from found_CLI_tools.noise_generator_image.noise import (
