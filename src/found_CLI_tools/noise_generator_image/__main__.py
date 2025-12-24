@@ -6,21 +6,21 @@ adjust various noise parameters via trackbars in real-time, and save the
 result when satisfied.
 """
 import argparse
-import sys
 import os
+import sys
 import cv2
 
 # Add src directory for full package path resolution
-src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
 from found_CLI_tools.noise_generator_image.noise import (
     add_gaussian_noise,
     add_salt_pepper_noise,
-    apply_radial_distortion,
+    apply_discretization,
     apply_motion_blur,
-    apply_discretization
+    apply_radial_distortion,
 )
 
 def interactive_noise_adjustment(base_image, output_path):

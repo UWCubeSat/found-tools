@@ -1,8 +1,7 @@
 import cairo
 
-from found_CLI_tools.generator.common.eval import float_equals
-from found_CLI_tools.generator.spatial.coordinate import Vector
 from found_CLI_tools.generator.spatial.camera import Camera
+from found_CLI_tools.generator.spatial.coordinate import Vector
 
 from typing import Iterable
 

@@ -3,7 +3,7 @@ import os
 import tempfile
 import numpy as np
 import cv2
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from src.found_CLI_tools.noise_generator_image.__main__ import (
     interactive_noise_adjustment,
@@ -261,7 +261,6 @@ class IntegrationTest(unittest.TestCase):
             img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
             
             # Fixed parameters
-            sigma = 15.0
             salt = 0.01
             pepper = 0.01
             k1, k2 = 0.05, 0.02

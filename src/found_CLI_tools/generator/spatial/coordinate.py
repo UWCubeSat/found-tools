@@ -21,10 +21,13 @@ class Attitude:
             roll (float): The roll of the attitude
             radians (bool, optional): Whether the 3 parameters are all specified as radians. Defaults to True.
         """
-        converter = lambda x: np.deg2rad(x) if not radians else x
-        self.right_ascension = converter(right_ascension)
-        self.declination = converter(declination)
-        self.roll = converter(roll)
+
+        def _convert(value: float) -> float:
+            return np.deg2rad(value) if not radians else value
+
+        self.right_ascension = _convert(right_ascension)
+        self.declination = _convert(declination)
+        self.roll = _convert(roll)
 
     def __str__(self) -> str:
         """Returns the string representation of this

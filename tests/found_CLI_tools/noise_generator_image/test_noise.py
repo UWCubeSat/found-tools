@@ -1,6 +1,5 @@
 import unittest
 import numpy as np
-import cv2
 
 from src.found_CLI_tools.noise_generator_image.noise import (
     add_gaussian_noise,
