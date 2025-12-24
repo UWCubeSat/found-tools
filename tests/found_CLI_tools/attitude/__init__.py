@@ -1,3 +1,1 @@
 """Attitude tool tests."""
-
-
