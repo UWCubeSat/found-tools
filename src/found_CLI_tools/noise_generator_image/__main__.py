@@ -8,12 +8,8 @@ result when satisfied.
 import argparse
 import os
 import sys
-import cv2
 
-# Add src directory for full package path resolution
-src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+import cv2
 
 from found_CLI_tools.noise_generator_image.noise import (
     add_gaussian_noise,
