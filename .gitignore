@@ -12,6 +12,9 @@ wheels/
 htmlcov/
 .coverage
 
+# Output files
+output/
+
 # Virtual environments
 .venv
 
