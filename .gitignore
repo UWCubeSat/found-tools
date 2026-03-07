@@ -13,8 +13,7 @@ htmlcov/
 .coverage
 
 # Output files
-output/*
-!output/
+pointOutput.txt
 
 # Virtual environments
 .venv
