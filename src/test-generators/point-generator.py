@@ -164,24 +164,6 @@ def generatePoints(calibratedConic, pointNoise, numPoints):
     points = noise(pointNoise, points)
     return points
 
-def bruteForcePoints(calibratedConic, pointNoise, numPoints):
-    i = 0
-    up = np.array([0,0,1])
-    points = np.zeros((numPoints, 2))
-    print(f"rc:{rc}; rp:{rp}")
-    print(Tpc.dot(up))
-    print(pixelSize)
-    counter = 0 # to make sure we don't stall
-    while i<numPoints:
-        xRand = random.random() * xRes
-        yRand = random.random() * yRes
-        coord = np.array([xRand, yRand, 1])
-        if (math.fabs(coord.dot(calibratedC.dot(coord))) < pointNoise):
-            points[i] = np.array([coord[0], coord[1]])
-            print(f"{{static_cast<decimal>({coord[0]}), static_cast<decimal>({coord[1]})}},")
-            i += 1
-    return points
-
 # position in world coords, local rotation
 def posrotmain(positionx, positiony, positionz, rotationx, rotationy, rotationz, numPoints, pointNoise, angleRedundancy, xRes, yRes, sensorWidth, focalLength):
     rp = np.array([positionx, positiony, positionz])
