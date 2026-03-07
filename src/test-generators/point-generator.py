@@ -6,6 +6,8 @@ import sys
 #CONVENTION: UNITS ARE IN KM AND RADIANS
 #CONVENTION: GLOBAL COORDS ARE RIGHT-HANDED Z-UP; LOCAL COORDS ARE LEFT-HANDED Z-FORWARD
 
+OUTPUT_FILE_PATH = "output/pointOutput.txt"
+
 #PARAMETERS
 #   camera
 xRes = 700
@@ -192,7 +194,7 @@ def posrotmain(positionx, positiony, positionz, rotationx, rotationy, rotationz,
         print("AAAAARGHHHH")
         return False
     # appends
-    with open("pointOutput.txt", "a") as f:
+    with open(OUTPUT_FILE_PATH, "a") as f:
         rotation = rotation*180/(math.pi)
         f.write(f"\n\nPOINTS FOR\nlocal (rc) [{rc[0]}, {rc[1]}, {rc[2]}]\nglobal (rp) [{rp[0]}, {rp[1]}, {rp[2]}] \nwith rotation [{rotation[0]}, {rotation[1]}, {rotation[2]}]:\n")
         for point in points:
