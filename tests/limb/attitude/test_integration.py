@@ -5,15 +5,15 @@ from contextlib import redirect_stdout
 from scipy.spatial.transform import Rotation
 from typing import Optional
 
-from found_CLI_tools.attitude.transform import DCM, Attitude
-from found_CLI_tools.attitude.constants import (
+from limb.attitude.transform import DCM, Attitude
+from limb.attitude.constants import (
     ROTATION_ORDER,
     CALIBRATION_HEADER,
     LOCAL_HEADER,
     REFERENCE_HEADER,
 )
 
-from found_CLI_tools.attitude.main import produce_attitudes, output_result
+from limb.attitude.main import produce_attitudes, output_result
 
 RE_FLOAT = r"[+-]?\d+(?:\.\d+)?"
 RE_WHITESPACE = r"\s+"

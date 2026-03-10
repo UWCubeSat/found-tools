@@ -12,7 +12,7 @@ def main():
 
     # Test 1: Import the package
     try:
-        import found_CLI_tools  # noqa: F401
+        import limb  # noqa: F401
 
         print("Package imported successfully")
     except ImportError as e:
@@ -21,7 +21,7 @@ def main():
 
     # Test 2: Import the attitude module
     try:
-        from found_CLI_tools.attitude import main, transform  # noqa: F401
+        from limb.attitude import main, transform  # noqa: F401
 
         print("Attitude module imported successfully")
     except ImportError as e:
@@ -30,7 +30,7 @@ def main():
 
     # Test 3: Check that the main function exists
     try:
-        from found_CLI_tools.attitude.main import main as attitude_main
+        from limb.attitude.main import main as attitude_main
 
         assert callable(attitude_main)
         print("CLI entry point exists")
@@ -40,7 +40,7 @@ def main():
 
     # Test 4: Import key classes
     try:
-        from found_CLI_tools.attitude.transform import Attitude, DCM  # noqa: F401
+        from limb.attitude.transform import Attitude, DCM  # noqa: F401
 
         print("Core classes imported successfully")
     except ImportError as e:

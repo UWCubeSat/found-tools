@@ -18,7 +18,7 @@ Typical usage::
 
 import numpy as np
 
-from found_CLI_tools.cameraGeometry import Camera, calibrationMatrix
+from limb.utils._camera import Camera
 
 
 def generateCameraConic(
@@ -45,10 +45,7 @@ def generateCameraConic(
     """
     tcp = orientation.T
     ac = orientation @ shapeMatrix @ tcp
-    c = (
-        ac @ np.outer(rc, rc) @ ac
-        - (rc @ ac @ rc * np.eye(3) - np.eye(3)) @ ac
-    )
+    c = ac @ np.outer(rc, rc) @ ac - (rc @ ac @ rc * np.eye(3) - np.eye(3)) @ ac
     return c
 
 
@@ -87,22 +84,15 @@ def solveQuadraticY(matrixA: np.ndarray, xVal: float):
         are complex or no solution exists.
     """
     a = matrixA[1, 1]
-    b = (
-        (matrixA[0, 1] + matrixA[1, 0]) * xVal
-        + (matrixA[1, 2] + matrixA[2, 1])
-    )
-    c = (
-        matrixA[0, 0] * xVal ** 2
-        + (matrixA[0, 2] + matrixA[2, 0]) * xVal
-        + matrixA[2, 2]
-    )
+    b = (matrixA[0, 1] + matrixA[1, 0]) * xVal + (matrixA[1, 2] + matrixA[2, 1])
+    c = matrixA[0, 0] * xVal**2 + (matrixA[0, 2] + matrixA[2, 0]) * xVal + matrixA[2, 2]
 
     if np.isclose(a, 0):
         if np.isclose(b, 0):
             return None
         return (-c / b,)
 
-    discriminant = b ** 2 - 4 * a * c
+    discriminant = b**2 - 4 * a * c
     if discriminant < 0:
         return None
     if np.isclose(discriminant, 0):
@@ -163,8 +153,8 @@ def generateEdgePoints(
         points: NumPy array of (x, y) pixel coordinates on the conic,
                 shape (numPoints, 2). Rows with no real solution contain NaN.
     """
-    kInv = np.linalg.inv(calibrationMatrix(cam))
+    kInv = cam.inverseCalibrationMatrix_
     camConic = generateCameraConic(pos, shapeMatrix, orientation)
     pixelConic = generatePixelConic(camConic, kInv)
-    xPoints = np.linspace(0, cam.XResolution() - 1, numPoints)
+    xPoints = np.linspace(0, cam.xResolution_ - 1, numPoints)
     return solveConic(pixelConic, xPoints)

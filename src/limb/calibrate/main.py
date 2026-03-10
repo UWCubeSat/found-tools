@@ -2,7 +2,7 @@ import argparse
 import logging
 from typing import Tuple, List, Optional
 
-from found_CLI_tools.attitude.constants import (
+from limb.attitude.constants import (
     CALIBRATION_BANNER,
     DISTANCE_BANNER,
     CALIBRATION_HEADER,
@@ -10,7 +10,7 @@ from found_CLI_tools.attitude.constants import (
     REFERENCE_HEADER,
 )
 
-from found_CLI_tools.attitude.transform import Attitude, DCM
+from limb.attitude.transform import Attitude, DCM
 
 logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s]: %(message)s")
 
