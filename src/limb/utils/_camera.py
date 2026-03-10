@@ -1,7 +1,8 @@
 """Camera geometry utilities.
 
 This module provides a pure-Python :class:`Camera` implementation along with
-helpers for building camera rotation and intrinsics matrices.
+helpers for building camera rotation and intrinsics matrices. Not usning FOUND camera class
+to avoid nonlinear dependencies.
 """
 
 import numpy as np

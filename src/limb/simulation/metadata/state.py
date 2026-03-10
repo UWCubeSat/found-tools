@@ -1,10 +1,36 @@
-from random import random
+import random
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 
-def generateUniformDirections():
-    return np.random.normal(size=(3, 3))
+def generateUniformDirections(num_vectors: int):
+    """
+    Generates Fibonacci lattice points on a sphere.
+
+    Args:
+        num_vectors (int): The number of vectors (points) to generate.
+
+    Returns:
+        np.ndarray: Array of Cartesian unit vectors with shape (N, 3),
+                    where each row is (x, y, z).
+    """
+    if num_vectors <= 0:
+        return np.empty((0, 3), dtype=np.float64)
+
+    indices = np.arange(num_vectors, dtype=np.float64)
+    golden_angle = np.pi * (3.0 - np.sqrt(5.0))
+
+    if num_vectors == 1:
+        z = np.array([0.0], dtype=np.float64)
+    else:
+        z = 2.0 * indices / (num_vectors - 1) - 1.0
+
+    azimuth = np.mod(golden_angle * indices, 2.0 * np.pi)
+    radial = np.sqrt(np.maximum(0.0, 1.0 - z * z))
+    x = radial * np.cos(azimuth)
+    y = radial * np.sin(azimuth)
+
+    return np.column_stack((x, y, z))
 
 
 def positionOnSurfaceEllipsoid(shapeMatrix, direction):
@@ -39,28 +65,46 @@ def generateSatelliteState(
     numSatellitePositions,
     numSatelliteOrientations,
 ):
-    # @pre earthPointDirection is a unit vector & distance > the max axis of the ellipsoid defined
-    # by shapeMatrix
-    # @note assumes planet is centered at the origin
-    # it is interesting that we can find the orientations of the satellites first without the position of
-    # the satellite if we know some properties about the camera and where we want the edge to appear in our image
+    """Generate satellite positions and orientations around an ellipsoid.
 
-    ### find the orientations of the satellite
+    Creates a grid of satellite positions at fixed distance from a target ellipsoid,
+    arranged in a circle around the tangent plane at earthPointDirection. For each
+    position, generates multiple camera orientations by rotating around the boresight.
 
-    # create rotation matrix that brings the z axis to earthPointDirection x and y axes
-    # are now tangent to the surface of the ellipsoid at the point defined by earthPointDirection
+    Args:
+        shapeMatrix: 3x3 symmetric matrix defining the ellipsoid (diagonal elements
+                     are 1/a² for semi-axes a, b, c).
+        earthPointDirection: Unit vector (shape 3) pointing to target location on ellipsoid.
+        distance: Satellite distance from origin. Must exceed the maximum semi-axis;
+                  satellites are always outside the ellipsoid body.
+        cameraClass: Camera object with focal length and resolution properties.
+        edgeOffset: Pixel margin from image boundary used to constrain edge angle.
+        numSatellitePositions: Number of positions around the tangent plane.
+        numSatelliteOrientations: Number of orientations per position (boresight angles).
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Satellite positions (shape numSatellitePositions, 3)
+        and orientations (shape numSatelliteOrientations × numSatellitePositions, 3, 3).
+
+    Raises:
+        AssertionError: If distance <= max semi-axis of the ellipsoid.
+    """
+    # Preconditions: earthPointDirection is a unit vector; distance > max(semi-axes).
+    max_semi_axis = 1.0 / np.sqrt(np.min(np.diag(shapeMatrix)))
+    assert distance > max_semi_axis, (
+        f"Satellite distance {distance} must be > max semi-axis {max_semi_axis}"
+    )
+
+    # Create orthonormal basis: earthPointDirection is the Z-axis;
+    # X and Y are tangent to the ellipsoid surface at this direction.
     tangentBasis = R.align_vectors([earthPointDirection], [[0, 0, 1]])[0].as_matrix()
 
-    # initialize satellite positions in the tangent plane
+    # Generate numSatellitePositions around the tangent plane.
     thetas = 2 * np.pi * np.arange(numSatellitePositions) / numSatellitePositions
     rotations = R.from_rotvec(thetas[:, None] * tangentBasis[:, 2]).as_matrix()
     rotatedTangentBasis = rotations @ tangentBasis
 
-    # rotatedTangentBasis has shape (numSatellitePositions, 3, 3) where the last dimension is the
-    # orthonormal basis vectors E0, E1, E2
-
-    # edge pixel of choice should fall within the circle inscribed by the rectangle of the image plane
-    # minus the edge offset
+    # Compute edge angle for camera: constrained by image bounds minus edge offset.
     smallestImageDimension = np.min(
         [
             cameraClass.xResolution_ * cameraClass.xPixelPitch_,
@@ -75,36 +119,32 @@ def generateSatelliteState(
     )
     imageEdgeAngle = random.uniform(0, imageMaxEdgeAngle)
 
-    # rotation around the E2 basis vector (surface normal) to point the E0 basis vector towards the
-    # edge pixel coordinate when the satellite is at its postion in the tangent plane
+    # Rotation sequence: flip E0 toward edge → rotate away from edge → rotate around boresight.
     rotationFlipE0 = R.from_rotvec(np.pi * rotatedTangentBasis[:, 2]).as_matrix()
-    # rotation away from edge pixel coordinate
     rotationOffImagePixel = R.from_rotvec(
         imageEdgeAngle * rotatedTangentBasis[:, 1]
     ).as_matrix()
-    # rotation around the camera boresight (E0 basis vector)
     phi = 2 * np.pi * np.arange(numSatelliteOrientations) / numSatelliteOrientations
-    rotationAroundBoresight = R.from_rotvec(
-        phi[:, None] * rotatedTangentBasis[:, 0]
-    ).as_matrix()
-
-    # find orientation of the satellite
-    # rotationFromTangentBasis has shape (numSatelliteOrientations, numSatellitePositions, 3, 3)
-    # where the last dimension is the rotation matrix from the tangent basis to the satellite orientation
-    satelliteOrientations = (
-        rotationAroundBoresight
-        @ rotationOffImagePixel
-        @ rotationFlipE0
-        @ rotatedTangentBasis
+    boresight_rotvecs = phi[:, None, None] * rotatedTangentBasis[None, :, 0, :]
+    # Reshape from (numSatelliteOrientations, numSatellitePositions, 3) to (M*N, 3)
+    # for scipy's Rotation.from_rotvec, then reshape back to (M, N, 3, 3).
+    boresight_rotvecs_flat = boresight_rotvecs.reshape(-1, 3)
+    rotations_flat = R.from_rotvec(boresight_rotvecs_flat).as_matrix()
+    rotationAroundBoresight = rotations_flat.reshape(
+        numSatelliteOrientations, numSatellitePositions, 3, 3
     )
 
-    ### find the position of the satellite
+    # Composite orientation: shape (numSatelliteOrientations, numSatellitePositions, 3, 3).
+    satelliteOrientations = (
+        rotationAroundBoresight
+        @ rotationOffImagePixel[None, ...]
+        @ rotationFlipE0[None, ...]
+        @ rotatedTangentBasis[None, ...]
+    )
 
-    # find vector to point on surface of ellipsoid
+    # Compute satellite positions at each tangent-plane location.
     surfacePoint = positionOnSurfaceEllipsoid(shapeMatrix, earthPointDirection)
-    # find distance from surface point to satellite position
     distanceFromEdgePoint = np.sqrt(distance**2 - np.linalg.norm(surfacePoint) ** 2)
-    # find satellite positions in equatorial coordinates
     satellitePositions = (
         surfacePoint + distanceFromEdgePoint * rotatedTangentBasis[:, 0]
     )

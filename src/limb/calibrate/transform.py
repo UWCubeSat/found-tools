@@ -1,5 +1,5 @@
 from scipy.spatial.transform import Rotation
-from limb.attitude.constants import ROTATION_ORDER, ANGLE_NORM
+from limb.calibrate.constants import ROTATION_ORDER, ANGLE_NORM
 
 
 class Attitude:

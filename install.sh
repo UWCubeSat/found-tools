@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Setup script for the found-tools development environment.
+# Setup script for the limb development environment.
 # This script installs dependencies for Linux (Debian/Fedora-based) and macOS.
 
 # Exit on any command failure

@@ -1,8 +1,8 @@
 import unittest
 from scipy.spatial.transform import Rotation
 
-from limb.attitude.transform import Attitude, DCM
-from limb.attitude.constants import ROTATION_ORDER
+from limb.calibrate.transform import Attitude, DCM
+from limb.calibrate.constants import ROTATION_ORDER
 
 
 class TransformTest(unittest.TestCase):

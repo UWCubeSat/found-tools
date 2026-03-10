@@ -12,6 +12,14 @@ wheels/
 htmlcov/
 .coverage
 
+# simulation output
+*.csv
+*.png
+
+# Debugging files
+.vscode/*
+launch.json
+
 # Virtual environments
 .venv
 
