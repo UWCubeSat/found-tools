@@ -21,10 +21,10 @@ import numpy as np
 from limb.utils._camera import Camera
 
 
-def generateCameraConic(
+def generate_camera_conic(
     rc: np.ndarray,
-    shapeMatrix: np.ndarray,
-    orientation: np.ndarray,
+    shape_matrix: np.ndarray,
+    tpc: np.ndarray,
 ) -> np.ndarray:
     """Build the conic locus matrix in camera coordinates.
 
@@ -33,7 +33,7 @@ def generateCameraConic(
 
     Args:
         rc:          Camera position vector in camera coordinates, shape (3,).
-        shapeMatrix: Ellipsoid defining matrix in world coordinates,
+        shape_matrix: Ellipsoid defining matrix in world coordinates,
                      shape (3, 3). Diagonal entries are 1/a² for each
                      semi-axis.
         orientation: Rotation matrix transforming world coordinates to camera
@@ -43,13 +43,13 @@ def generateCameraConic(
         C: 3×3 symmetric NumPy array representing the conic locus in camera
            coordinates.
     """
-    tcp = orientation.T
-    ac = orientation @ shapeMatrix @ tcp
+    tcp = tpc.T
+    ac = tpc @ shape_matrix @ tcp
     c = ac @ np.outer(rc, rc) @ ac - (rc @ ac @ rc * np.eye(3) - np.eye(3)) @ ac
     return c
 
 
-def generatePixelConic(c: np.ndarray, kInv: np.ndarray) -> np.ndarray:
+def generate_pixel_conic(c: np.ndarray, camera: Camera) -> np.ndarray:
     """Project the camera-space conic into pixel coordinates.
 
     Applies the inverse intrinsics transform K⁻¹ so the resulting matrix
@@ -62,30 +62,32 @@ def generatePixelConic(c: np.ndarray, kInv: np.ndarray) -> np.ndarray:
 
     Args:
         c:    3×3 symmetric conic matrix in camera (metric) coordinates.
-        kInv: 3×3 inverse intrinsics matrix (K⁻¹).
+        camera: :class:`~found_CLI_tools.cameraGeometry.Camera` object
+                supplying intrinsics and resolution.
 
     Returns:
         calibratedC: 3×3 symmetric conic matrix in pixel coordinates,
                      normalised so calibratedC[0, 0] == 1.
     """
-    calibratedC = kInv.T @ c @ kInv
-    return calibratedC / calibratedC[0, 0]
+    k_inv = camera.inverseCalibrationMatrix_
+    calibrated_c = k_inv.T @ c @ k_inv
+    return calibrated_c / calibrated_c[0, 0]
 
 
-def solveQuadraticY(matrixA: np.ndarray, xVal: float):
+def solve_quadratic_y(matrix_a: np.ndarray, x_val: float):
     """Solve for y in the quadratic form [x, y, 1] A [x, y, 1]ᵀ = 0.
 
     Args:
-        matrixA: 3×3 NumPy array representing the symmetric quadratic form.
-        xVal:    The known x-coordinate.
+        matrix_a: 3×3 NumPy array representing the symmetric quadratic form.
+        x_val:    The known x-coordinate.
 
     Returns:
         A tuple of real roots (y1, y2) if they exist, or None if the roots
         are complex or no solution exists.
     """
-    a = matrixA[1, 1]
-    b = (matrixA[0, 1] + matrixA[1, 0]) * xVal + (matrixA[1, 2] + matrixA[2, 1])
-    c = matrixA[0, 0] * xVal**2 + (matrixA[0, 2] + matrixA[2, 0]) * xVal + matrixA[2, 2]
+    a = matrix_a[1, 1]
+    b = (matrix_a[0, 1] + matrix_a[1, 0]) * x_val + (matrix_a[1, 2] + matrix_a[2, 1])
+    c = matrix_a[0, 0] * x_val**2 + (matrix_a[0, 2] + matrix_a[2, 0]) * x_val + matrix_a[2, 2]
 
     if np.isclose(a, 0):
         if np.isclose(b, 0):
@@ -98,11 +100,11 @@ def solveQuadraticY(matrixA: np.ndarray, xVal: float):
     if np.isclose(discriminant, 0):
         return (-b / (2 * a),)
 
-    sqrtD = np.sqrt(discriminant)
-    return ((-b + sqrtD) / (2 * a), (-b - sqrtD) / (2 * a))
+    sqrt_d = np.sqrt(discriminant)
+    return ((-b + sqrt_d) / (2 * a), (-b - sqrt_d) / (2 * a))
 
 
-def solveConic(conic: np.ndarray, xVals: np.ndarray) -> np.ndarray:
+def solve_conic(conic: np.ndarray, x_vals: np.ndarray) -> np.ndarray:
     """Sample y-coordinates on a conic for an array of x-values.
 
     For each x, solves the quadratic form [x, y, 1] A [x, y, 1]ᵀ = 0 for y.
@@ -111,25 +113,25 @@ def solveConic(conic: np.ndarray, xVals: np.ndarray) -> np.ndarray:
 
     Args:
         conic:  3×3 symmetric conic matrix in pixel coordinates.
-        xVals:  1-D array of x pixel coordinates, shape (N,).
+        x_vals:  1-D array of x pixel coordinates, shape (N,).
 
     Returns:
         points: Array of (x, y) pixel coordinates, shape (N, 2).
                 Rows where no real solution exists contain NaN.
     """
-    points = np.full((len(xVals), 2), np.nan)
-    for i, x in enumerate(xVals):
-        roots = solveQuadraticY(conic, x)
+    points = np.full((len(x_vals), 2), np.nan)
+    for i, x in enumerate(x_vals):
+        roots = solve_quadratic_y(conic, x)
         if roots is not None:
             points[i] = [x, min(roots, key=abs)]
     return points
 
 
-def generateEdgePoints(
+def generate_edge_points(
     pos: np.ndarray,
-    shapeMatrix: np.ndarray,
+    shape_matrix: np.ndarray,
     orientation: np.ndarray,
-    numPoints: int,
+    num_points: int,
     cam: Camera,
 ) -> np.ndarray:
     """Generate points on the projected horizon ellipse in pixel coordinates.
@@ -140,21 +142,29 @@ def generateEdgePoints(
 
     Args:
         pos:         Satellite position in camera coordinates, shape (3,).
-        shapeMatrix: Ellipsoid defining matrix in world coordinates,
+        shape_matrix: Ellipsoid defining matrix in world coordinates,
                      shape (3, 3). Diagonal entries are 1/a² for each
                      semi-axis.
         orientation: Rotation matrix from world to camera coordinates
                      (TPC), shape (3, 3).
-        numPoints:   Number of points to sample along the conic.
+        num_points:   Number of points to sample along the conic.
         cam:         :class:`~found_CLI_tools.cameraGeometry.Camera` object
                      supplying intrinsics and resolution.
 
     Returns:
         points: NumPy array of (x, y) pixel coordinates on the conic,
-                shape (numPoints, 2). Rows with no real solution contain NaN.
+            shape (num_points, 2). Rows with no real solution contain NaN.
     """
-    kInv = cam.inverseCalibrationMatrix_
-    camConic = generateCameraConic(pos, shapeMatrix, orientation)
-    pixelConic = generatePixelConic(camConic, kInv)
-    xPoints = np.linspace(0, cam.xResolution_ - 1, numPoints)
-    return solveConic(pixelConic, xPoints)
+    k_inv = cam.inverseCalibrationMatrix_
+    cam_conic = generate_camera_conic(pos, shape_matrix, orientation)
+    pixel_conic = generate_pixel_conic(cam_conic, k_inv)
+    x_points = np.linspace(0, cam.xResolution_ - 1, num_points)
+    return solve_conic(pixel_conic, x_points)
+
+
+# Backward-compatible aliases for previous camelCase API names.
+generateCameraConic = generate_camera_conic
+generatePixelConic = generate_pixel_conic
+solveQuadraticY = solve_quadratic_y
+solveConic = solve_conic
+generateEdgePoints = generate_edge_points

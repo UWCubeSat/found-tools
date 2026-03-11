@@ -3,10 +3,11 @@ from pathlib import Path
 
 import numpy as np
 
-from limb.simulation.edge.conic import generateCameraConic, generatePixelConic
+from limb.simulation.edge.conic import generate_camera_conic, generateCameraConic, generatePixelConic
+from limb.simulation.metadata.df import _fill_cam_columns, _initialize_sim_df
 from limb.simulation.metadata.state import (
-	generateSatelliteState,
-	generateUniformDirections,
+	_sat_position_boresight,
+	generate_uniform_directions,
 )
 from limb.simulation.render import conic as render_conic
 from limb.utils._camera import Camera
@@ -190,7 +191,6 @@ def _conic_matrix_to_coeffs(conic: np.ndarray) -> np.ndarray:
 		dtype=np.float32,
 	)
 
-
 def main() -> None:  # pragma: no cover
 	args = _parse_args()
 	_validate_args(args)
@@ -203,10 +203,8 @@ def main() -> None:  # pragma: no cover
 	if args.earth_point_direction is not None:
 		earth_directions = np.array([args.earth_point_direction], dtype=np.float64)
 	else:
-		earth_directions = generateUniformDirections(args.num_directions)
+		earth_directions = generate_uniform_directions(args.num_directions)
 
-	norms = np.linalg.norm(earth_directions, axis=1, keepdims=True)
-	earth_directions = earth_directions / norms
 
 	camera = Camera(
 		focalLength=args.focal_length,
@@ -220,62 +218,96 @@ def main() -> None:  # pragma: no cover
 		edgeAngleMode=args.edge_angle_mode,
 	)
 
-	conic_coeffs = []
-	state_records = []
-	for earth_point_direction in earth_directions:
-		satellite_positions, satellite_orientations = generateSatelliteState(
-			shape_matrix,
-			earth_point_direction,
-			args.distance,
-			camera,
-			args.num_satellite_positions,
-			args.num_satellite_orientations,
-		)
+	sat_positions, r_tcps = _sat_position_boresight(
+		shape_matrix,
+		earth_directions,
+		args.num_satellite_positions,
+		args.distance,
+	)
 
-		for orient_idx in range(args.num_satellite_orientations):
-			for pos_idx in range(args.num_satellite_positions):
-				orientation = satellite_orientations[orient_idx, pos_idx]
-				# Transform satellite position from world frame to camera frame (rc = TPC @ rp).
-				TPC = np.linalg.inv(orientation)
-				rc = TPC @ satellite_positions[pos_idx]
-				camera_conic = generateCameraConic(
-					rc,
-					shape_matrix,
-					TPC,
-				)
-				pixel_conic = generatePixelConic(camera_conic, camera.inverseCalibrationMatrix_)
-				coeff = _conic_matrix_to_coeffs(pixel_conic)
-				conic_coeffs.append(coeff)
-				state_records.append(
-					np.concatenate([
-						satellite_positions[pos_idx],
-						satellite_orientations[orient_idx, pos_idx].ravel(),
-						coeff,
-					])
-				)
+	tcps = r_tcps.to_matrix()  
+	tpcs = tcps.T  # Convert to world-to-camera rotation matrices.
+	spheroid_positions = tpcs @ sat_positions 
 
-	coeffs_nx6 = np.stack(conic_coeffs, axis=0)
-	if args.save_coeffs is not None:
-		args.save_coeffs.parent.mkdir(parents=True, exist_ok=True)
-		records_array = np.stack(state_records, axis=0)
-		records_array[np.abs(records_array) < 0.01] = 0.0
-		np.savetxt(
-			args.save_coeffs.with_suffix(".csv"),
-			records_array,
-			delimiter=",",
-			header="pos_x,pos_y,pos_z,R00,R01,R02,R10,R11,R12,R20,R21,R22,A,B,C,D,E,F",
-			comments="",
-			fmt="%.1f",
-		)
+	image_conic = generate_camera_conic(spheroid_positions, shape_matrix, tpcs)
+	pixel_conic = generatePixelConic(image_conic, camera)
 
+
+	df = _initialize_sim_df(sat_positions.shape[0])
+	df = _fill_cam_columns(df, camera)
+	df[["true_pos_x", "true_pos_y", "true_pos_z"]] = sat_positions
+	df[["shape_axis_a", "shape_axis_b", "shape_axis_c"]] = np.array(args.semi_axes)
+	df[["true_attitude_ra", "true_attitude_dec", "true_attitude_roll"]] = r_tcps.as_euler("zyx", degrees=True)
+
+
+
+	conic_coeffs = np.array([_conic_matrix_to_coeffs(c) for c in pixel_conic])
 	render_conic.process_simulation(
-		coeffs_nx6=render_conic.torch.from_numpy(coeffs_nx6),
+		coeffs_nx6=render_conic.torch.from_numpy(conic_coeffs),
 		width=args.x_resolution,
 		height=args.y_resolution,
 		output_folder=str(args.output_folder),
 		batch_size=args.batch_size,
 		sigma=args.sigma,
 	)
+
+
+# 	conic_coeffs = []
+# 	state_records = []
+# 	for earth_point_direction in earth_directions:
+# 		satellite_positions, satellite_orientations = generateSatelliteState(
+# 			shape_matrix,
+# 			earth_point_direction,
+# 			args.distance,
+# 			camera,
+# 			args.num_satellite_positions,
+# 			args.num_satellite_orientations,
+# 		)
+
+# 		for orient_idx in range(args.num_satellite_orientations):
+# 			for pos_idx in range(args.num_satellite_positions):
+# 				orientation = satellite_orientations[orient_idx, pos_idx]
+# 				# Transform satellite position from world frame to camera frame (rc = TPC @ rp).
+# 				TPC = np.linalg.inv(orientation)
+# 				rc = TPC @ satellite_positions[pos_idx]
+# 				camera_conic = generateCameraConic(
+# 					rc,
+# 					shape_matrix,
+# 					TPC,
+# 				)
+# 				pixel_conic = generatePixelConic(camera_conic, camera.inverseCalibrationMatrix_)
+# 				coeff = _conic_matrix_to_coeffs(pixel_conic)
+# 				conic_coeffs.append(coeff)
+# 				state_records.append(
+# 					np.concatenate([
+# 						satellite_positions[pos_idx],
+# 						satellite_orientations[orient_idx, pos_idx].ravel(),
+# 						coeff,
+# 					])
+# 				)
+
+# 	coeffs_nx6 = np.stack(conic_coeffs, axis=0)
+# 	if args.save_coeffs is not None:
+# 		args.save_coeffs.parent.mkdir(parents=True, exist_ok=True)
+# 		records_array = np.stack(state_records, axis=0)
+# 		records_array[np.abs(records_array) < 0.01] = 0.0
+# 		np.savetxt(
+# 			args.save_coeffs.with_suffix(".csv"),
+# 			records_array,
+# 			delimiter=",",
+# 			header="pos_x,pos_y,pos_z,R00,R01,R02,R10,R11,R12,R20,R21,R22,A,B,C,D,E,F",
+# 			comments="",
+# 			fmt="%.1f",
+# 		)
+
+# 	render_conic.process_simulation(
+# 		coeffs_nx6=render_conic.torch.from_numpy(coeffs_nx6),
+# 		width=args.x_resolution,
+# 		height=args.y_resolution,
+# 		output_folder=str(args.output_folder),
+# 		batch_size=args.batch_size,
+# 		sigma=args.sigma,
+# 	)
 
 
 if __name__ == "__main__":

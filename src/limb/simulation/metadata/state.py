@@ -1,9 +1,8 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-import pandas as pd
 
 
-def generateUniformDirections(num_vectors: int):
+def generate_uniform_directions(num_vectors: int) -> np.ndarray:
     """
     Generates Fibonacci lattice points on a sphere.
 
@@ -33,77 +32,76 @@ def generateUniformDirections(num_vectors: int):
     return np.column_stack((x, y, z))
 
 
-def positionOnSurfaceEllipsoid(shapeMatrix, direction):
+def _position_on_surface_ellipsoid(shape_matrix: np.ndarray, direction: np.ndarray) -> np.ndarray:
     """
     Calculate the position on the surface of an ellipsoid given a direction vector.
 
     Parameters:
-    diagonalShapeMatrix (3x3 np.ndarray): Diagonal matrix representing the shape of the ellipsoid.
-    direction (3d np.ndarray): Direction vector.
+    shape_matrix (np.ndarray): Ellipsoid shape matrix with shape (3, 3).
+    direction (np.ndarray): Direction vector with shape (3,).
 
     Returns:
-    3d np.ndarray: Position on the surface of the ellipsoid.
+    np.ndarray: Position on the surface of the ellipsoid with shape (3,).
     """
-    # Ensure the direction is a unit vector
     direction = direction / np.linalg.norm(direction)
+    scale_factor = 1 / np.sqrt(direction.T @ shape_matrix @ direction)
+    return scale_factor * direction
 
-    # Calculate the scaling factor to reach the surface of the ellipsoid
-    scaleFactor = 1 / np.sqrt(direction.T @ shapeMatrix @ direction)
-
-    # Calculate the position on the surface
-    position = scaleFactor * direction
-
-    return position
-
-def normSpheroid(shapeMatrix, surfacePoint):
+def _norm_spheroid(shape_matrix, surface_point):
     """
     Calculate the norm of a direction vector with respect to an ellipsoid.
 
     Parameters:
-    shapeMatrix (3x3 np.ndarray): Diagonal matrix representing the shape of the ellipsoid.
-    surfacePoint (3d np.ndarray): Point on the surface of the ellipsoid.
+    shape_matrix (np.ndarray): Ellipsoid shape matrix with shape (3, 3).
+    surface_point (np.ndarray): Surface point with shape (3,).
 
     Returns:
-    float: Norm of the direction vector with respect to the ellipsoid.
+    np.ndarray: Unit surface normal with shape (3,).
     """
-    Sd = shapeMatrix @ surfacePoint
-    return Sd / np.linalg.norm(Sd)
+    sd = shape_matrix @ surface_point
+    return sd / np.linalg.norm(sd)
 
-def rotateBasis(basis, axis, numRotations):
-    thetas = 2 * np.pi * np.arange(numRotations) / numRotations
+def _rotate_basis(basis, axis, num_rotations):
+    thetas = 2 * np.pi * np.arange(num_rotations) / num_rotations
     rotations = R.from_rotvec(thetas[:, None] * axis).as_matrix()
     return rotations @ basis
 
-def satPositions(shapeMatrix, earthPointDirections, numSatellitePositions, distance):
-    surfacePoints = positionOnSurfaceEllipsoid(shapeMatrix, earthPointDirections)
-    norm = normSpheroid(shapeMatrix, earthPointDirections)
-    normBasis = R.align_vectors([norm], [[0, 0, 1]]).as_matrix()
+def _sat_position_boresight(shape_matrix, earth_point_directions, num_satellite_positions, distance):
+    """
+    Generate satellite positions around points on an ellipsoid.
 
-    length = np.sqrt(distance**2 np.linalg.norm(surfacePoints[0])**2)
+    Parameters:
+    shape_matrix (np.ndarray): Ellipsoid shape matrix with shape (3, 3).
+    earth_point_directions (np.ndarray): Unit direction vectors with shape (N, 3).
+    num_satellite_positions (int): Number of satellite positions per earth point.
+    distance (float): Distance from the origin to the satellite.
 
-    satPositions = np.array([])
-    directionToEdge = np.array([])
-    for b,s in (normBasis, surfacePoints):
-        normBasisVariants = rotateBasis(b, b[:, 2], numSatellitePositions)
-        for bv in normBasisVariants:
-            directionToEdge.append(-bv[:,0])
-            satPositions.append(s + length * bv[:,0])
+    Returns:
+    tuple[np.ndarray, rotation]:
+        - sat_positions with shape (N * num_satellite_positions, 3)
+        - direction_to_edge with shape (N * num_satellite_positions, 3)
+    """
+    assert np.isclose(np.linalg.norm(earth_point_directions, axis=1), 1.0).all(), (
+        "earth_point_directions must be unit vectors"
+    )
 
-    return satPositions, directionToEdge
+    sat_positions = []
+    sat_to_edge = []
+    for direction in earth_point_directions:
+        surface_point = _position_on_surface_ellipsoid(shape_matrix, direction)
+        norm = _norm_spheroid(shape_matrix, direction)
+        norm_basis = R.align_vectors([norm], [[0, 0, 1]])[0].as_matrix()
+        length = np.sqrt(distance**2 - np.linalg.norm(surface_point) ** 2)
+        norm_basis_variants = _rotate_basis(norm_basis, norm_basis[:, 2], num_satellite_positions)
+        for bv in norm_basis_variants:
+            sat_to_edge.append(-bv[:, 0])
+            sat_positions.append(surface_point + length * bv[:, 0])
 
-def generateSatelliteState(
-    shapeMatrix,
-    earthPointDirections,
-    distance,
-    cameraClass,
-    numSatellitePositions,
-    numCameraOrientations,
-):
-    satPositions, satToEdge = satPositions(shapeMatrix, earthPointDirections, distance)
+    sat_positions = np.array(sat_positions)
+    sat_to_edge = np.array(sat_to_edge)
+    tcps = R.align_vectors(sat_to_edge, np.tile([1, 0, 0], (len(sat_to_edge), 1)))[0]
 
-    TCPs = R.align_vectors([satToEdge], [[1, 0, 0]]).as_matrix()
-
-    return satPositions, TCPs
+    return sat_positions, tcps
 
 
 # def generateSatelliteState(
