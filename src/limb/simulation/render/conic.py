@@ -45,26 +45,31 @@ def process_simulation(coeffs_nx6, width, height, output_folder, batch_size=500,
 
             # 3. Vectorized Math (Implicit Equation + Analytic Blur)
             with torch.no_grad():
+                # Use broadcasting effectively: (B, 1, 1) * (1, H, W) -> (B, H, W)
+                # Ensure grid is on the correct device
                 Q = A*grid_x**2 + B*grid_x*grid_y + C*grid_y**2 + D*grid_x + E*grid_y + F
                 
-                # Gradient Magnitude for distance approximation
                 gx = 2*A*grid_x + B*grid_y + D
                 gy = B*grid_x + 2*C*grid_y + E
                 grad_mag = torch.sqrt(gx**2 + gy**2 + 1e-8)
                 
-                # Distance and Intensity
-                dist = torch.clamp(Q, min=0) / grad_mag
+                # Distance approximation: Algebraic distance / Gradient Magnitude
+                # Use absolute value for Q to handle both sides of the curve
+                dist = torch.abs(Q) / grad_mag 
                 intensity = torch.exp(-(dist**2) / (2 * sigma**2))
 
-            # 4. Offload to CPU and Queue for Disk I/O
+            # 4. Move to CPU and handle as a list of numpy arrays immediately
+            # This prevents the next batch from overwriting the memory if using shared buffers
             batch_cpu = intensity.cpu().numpy()
+
             save_tasks = []
             for j in range(batch_cpu.shape[0]):
                 file_path = os.path.join(output_folder, f"img_{i + j:06d}.png")
-                save_tasks.append((batch_cpu[j], file_path))
-            
-            # Map the saving tasks to the thread pool
-            executor.map(save_image_worker, save_tasks)
+                # We pass a COPY of the slice to ensure the thread owns the data
+                save_tasks.append((batch_cpu[j].copy(), file_path))
+
+            # Use list() to force the executor to finish the batch before moving to the next
+            list(executor.map(save_image_worker, save_tasks))
 
 # --- Execution ---
 if __name__ == "__main__":

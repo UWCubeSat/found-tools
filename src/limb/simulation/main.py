@@ -49,8 +49,18 @@ def _parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--edge-offset",
 		type=float,
-		required=True,
-		help="Offset from the edge of the image (pixels).",
+		default=None,
+		help=(
+			"Optional physical edge offset used by camera edge-angle sampling. "
+			"Defaults to 10%% of the minimum physical image dimension."
+		),
+	)
+	parser.add_argument(
+		"--edge-angle-mode",
+		type=str,
+		choices=("randomized", "zero"),
+		default="randomized",
+		help="Edge-angle strategy used by the camera.",
 	)
 	parser.add_argument(
 		"--num-satellite-positions",
@@ -206,6 +216,8 @@ def main() -> None:  # pragma: no cover
 		yResolution=args.y_resolution,
 		xCenter=args.x_center,
 		yCenter=args.y_center,
+		edgeOffset=args.edge_offset,
+		edgeAngleMode=args.edge_angle_mode,
 	)
 
 	conic_coeffs = []
@@ -216,37 +228,44 @@ def main() -> None:  # pragma: no cover
 			earth_point_direction,
 			args.distance,
 			camera,
-			args.edge_offset,
 			args.num_satellite_positions,
 			args.num_satellite_orientations,
 		)
 
 		for orient_idx in range(args.num_satellite_orientations):
 			for pos_idx in range(args.num_satellite_positions):
+				orientation = satellite_orientations[orient_idx, pos_idx]
+				# Transform satellite position from world frame to camera frame (rc = TPC @ rp).
+				TPC = np.linalg.inv(orientation)
+				rc = TPC @ satellite_positions[pos_idx]
 				camera_conic = generateCameraConic(
-					satellite_positions[pos_idx],
+					rc,
 					shape_matrix,
-					satellite_orientations[orient_idx, pos_idx],
+					TPC,
 				)
 				pixel_conic = generatePixelConic(camera_conic, camera.inverseCalibrationMatrix_)
-				conic_coeffs.append(_conic_matrix_to_coeffs(pixel_conic))
+				coeff = _conic_matrix_to_coeffs(pixel_conic)
+				conic_coeffs.append(coeff)
 				state_records.append(
 					np.concatenate([
 						satellite_positions[pos_idx],
 						satellite_orientations[orient_idx, pos_idx].ravel(),
+						coeff,
 					])
 				)
 
 	coeffs_nx6 = np.stack(conic_coeffs, axis=0)
 	if args.save_coeffs is not None:
 		args.save_coeffs.parent.mkdir(parents=True, exist_ok=True)
+		records_array = np.stack(state_records, axis=0)
+		records_array[np.abs(records_array) < 0.01] = 0.0
 		np.savetxt(
 			args.save_coeffs.with_suffix(".csv"),
-			np.stack(state_records, axis=0),
+			records_array,
 			delimiter=",",
-			header="pos_x,pos_y,pos_z,R00,R01,R02,R10,R11,R12,R20,R21,R22",
+			header="pos_x,pos_y,pos_z,R00,R01,R02,R10,R11,R12,R20,R21,R22,A,B,C,D,E,F",
 			comments="",
-			fmt="%.10e",
+			fmt="%.1f",
 		)
 
 	render_conic.process_simulation(
