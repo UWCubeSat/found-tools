@@ -225,25 +225,27 @@ def main() -> None:  # pragma: no cover
 		args.distance,
 	)
 
-	tcps = r_tcps.to_matrix()  
-	tpcs = tcps.T  # Convert to world-to-camera rotation matrices.
-	spheroid_positions = tpcs @ sat_positions 
-
-	image_conic = generate_camera_conic(spheroid_positions, shape_matrix, tpcs)
-	pixel_conic = generatePixelConic(image_conic, camera)
-
-
 	df = _initialize_sim_df(sat_positions.shape[0])
 	df = _fill_cam_columns(df, camera)
-	df[["true_pos_x", "true_pos_y", "true_pos_z"]] = sat_positions
-	df[["shape_axis_a", "shape_axis_b", "shape_axis_c"]] = np.array(args.semi_axes)
-	df[["true_attitude_ra", "true_attitude_dec", "true_attitude_roll"]] = r_tcps.as_euler("zyx", degrees=True)
+
+	tcps = r_tcps.as_matrix() 
+
+	conic_coeffs = []
+	for (tcp, sat_pos) in zip(tcps, sat_positions):
+		tpc = tcp.T  # Convert to world-to-camera rotation matrices.
+		sph_pos = tpc @ sat_pos.T
+
+		image_conic = generate_camera_conic(sph_pos, shape_matrix, tpc)
+		pixel_conic = generatePixelConic(image_conic, camera)
+		conic_coeffs.append(_conic_matrix_to_coeffs(pixel_conic))
+		
+		df[["true_pos_x", "true_pos_y", "true_pos_z"]] = sat_positions
+		df[["shape_axis_a", "shape_axis_b", "shape_axis_c"]] = np.array(args.semi_axes)
+		df[["true_attitude_ra", "true_attitude_dec", "true_attitude_roll"]] = r_tcps.as_euler("zyx", degrees=True)
 
 
-
-	conic_coeffs = np.array([_conic_matrix_to_coeffs(c) for c in pixel_conic])
 	render_conic.process_simulation(
-		coeffs_nx6=render_conic.torch.from_numpy(conic_coeffs),
+		coeffs_nx6=render_conic.torch.from_numpy(np.array(conic_coeffs, dtype=np.float32)),
 		width=args.x_resolution,
 		height=args.y_resolution,
 		output_folder=str(args.output_folder),

@@ -99,7 +99,10 @@ def _sat_position_boresight(shape_matrix, earth_point_directions, num_satellite_
 
     sat_positions = np.array(sat_positions)
     sat_to_edge = np.array(sat_to_edge)
-    tcps = R.align_vectors(sat_to_edge, np.tile([1, 0, 0], (len(sat_to_edge), 1)))[0]
+    tcps = R.concatenate([
+        R.align_vectors([edge], [[1, 0, 0]])[0]
+        for edge in sat_to_edge
+    ])
 
     return sat_positions, tcps
 
