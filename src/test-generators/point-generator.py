@@ -196,6 +196,8 @@ def posrotmain(positionx, positiony, positionz, rotationx, rotationy, rotationz,
     # appends
     with open(OUTPUT_FILE_PATH, "a") as f:
         rotation = rotation*180/(math.pi)
+        rc = rc*100000
+        rp = rp*100000
         f.write(f"\n\nPOINTS FOR\nlocal (rc) [{rc[0]}, {rc[1]}, {rc[2]}]\nglobal (rp) [{rp[0]}, {rp[1]}, {rp[2]}] \nwith rotation [{rotation[0]}, {rotation[1]}, {rotation[2]}]:\n")
         for point in points:
             f.write(f"{{static_cast<decimal>({point[0]}), static_cast<decimal>({point[1]})}},")
