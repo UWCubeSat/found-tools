@@ -87,7 +87,11 @@ def solve_quadratic_y(matrix_a: np.ndarray, x_val: float):
     """
     a = matrix_a[1, 1]
     b = (matrix_a[0, 1] + matrix_a[1, 0]) * x_val + (matrix_a[1, 2] + matrix_a[2, 1])
-    c = matrix_a[0, 0] * x_val**2 + (matrix_a[0, 2] + matrix_a[2, 0]) * x_val + matrix_a[2, 2]
+    c = (
+        matrix_a[0, 0] * x_val**2
+        + (matrix_a[0, 2] + matrix_a[2, 0]) * x_val
+        + matrix_a[2, 2]
+    )
 
     if np.isclose(a, 0):
         if np.isclose(b, 0):

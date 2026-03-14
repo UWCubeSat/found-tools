@@ -1,4 +1,3 @@
-
 import numpy as np
 import pandas as pd
 
@@ -78,7 +77,8 @@ def _initialize_sim_df(size: int) -> pd.DataFrame:
         "out_y_centroid": pd.Series(dtype="float64"),
         "out_r_apparent": pd.Series(dtype="float64"),
     }
-    return pd.DataFrame(index = np.arange(size), columns=columns.keys())
+    return pd.DataFrame(index=np.arange(size), columns=columns.keys())
+
 
 def _fill_cam_columns(df: pd.DataFrame, camera: Camera) -> pd.DataFrame:
     """Fill camera parameter columns in the simulation DataFrame.
@@ -90,12 +90,12 @@ def _fill_cam_columns(df: pd.DataFrame, camera: Camera) -> pd.DataFrame:
     Returns:
         The same DataFrame with camera columns filled in-place.
     """
-    df["cam_focal_length"]    = camera.focal_length
-    df["cam_x_pixel_pitch"]   = camera.x_pixel_pitch
-    df["cam_y_pixel_pitch"]   = camera.y_pixel_pitch
-    df["cam_x_resolution"]    = camera.x_resolution
-    df["cam_y_resolution"]    = camera.y_resolution
-    df["cam_x_center"]        = camera.x_center
-    df["cam_y_center"]        = camera.y_center
+    df["cam_focal_length"] = camera.focal_length
+    df["cam_x_pixel_pitch"] = camera.x_pixel_pitch
+    df["cam_y_pixel_pitch"] = camera.y_pixel_pitch
+    df["cam_x_resolution"] = camera.x_resolution
+    df["cam_y_resolution"] = camera.y_resolution
+    df["cam_x_center"] = camera.x_center
+    df["cam_y_center"] = camera.y_center
 
     return df

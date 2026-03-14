@@ -35,7 +35,7 @@ class Camera:
         )
         self.min_image_dimension = min(
             self.x_resolution * self.x_pixel_pitch,
-            self.y_resolution * self.y_pixel_pitch
+            self.y_resolution * self.y_pixel_pitch,
         )
         self.image_max_edge_angle = self._max_edge_angle()
         self.calibration_matrix = self._calibration_matrix()
