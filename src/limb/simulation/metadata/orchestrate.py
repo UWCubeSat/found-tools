@@ -17,7 +17,7 @@ def initialize_sim_df() -> pd.DataFrame:
     -------------
     Inputs (independent variables):
         true_pos_x/y/z          Satellite position in world frame (rectangular, m).
-        true_attitude_ra/dec/roll  Optical-axis direction and roll (degrees).
+        qx, qy, qz, qw             Optical-axis attitude as quaternion (scipy order: x, y, z, w).
         shape_axis_a/b/c         Ellipsoid semi-axes (m); diagonal entries of shape matrix.
         atmosphere_blur          Gaussian blur sigma applied to the limb edge (pixels).
 
@@ -53,9 +53,10 @@ def initialize_sim_df() -> pd.DataFrame:
         "true_pos_x": pd.Series(dtype="float64"),
         "true_pos_y": pd.Series(dtype="float64"),
         "true_pos_z": pd.Series(dtype="float64"),
-        "true_attitude_ra": pd.Series(dtype="float64"),
-        "true_attitude_dec": pd.Series(dtype="float64"),
-        "true_attitude_roll": pd.Series(dtype="float64"),
+        "qx": pd.Series(dtype="float64"),
+        "qy": pd.Series(dtype="float64"),
+        "qz": pd.Series(dtype="float64"),
+        "qw": pd.Series(dtype="float64"),
         # --- planet model ---
         "shape_axis_a": pd.Series(dtype="float64"),
         "shape_axis_b": pd.Series(dtype="float64"),
@@ -87,19 +88,20 @@ def initialize_sim_df() -> pd.DataFrame:
 
 
 def _fill_setup(
-        df: pd.DataFrame, 
-        camera: Camera, 
-        sat_position: np.ndarray, 
-        semi_axes: np.ndarray, 
-        euler_angles: np.ndarray) -> pd.DataFrame:
+        df: pd.DataFrame,
+        camera: Camera,
+        sat_position: np.ndarray,
+        semi_axes: np.ndarray,
+        quat: np.ndarray,
+) -> pd.DataFrame:
     """Add a new row to the simulation DataFrame with all input columns populated.
 
     Args:
-        df: DataFrame initialised by ``_initialize_sim_df``.
+        df: DataFrame initialised by ``initialize_sim_df``.
         camera: Camera object supplying intrinsic parameters.
         sat_position: 1-D array ``[x, y, z]`` – satellite position in world frame (m).
         semi_axes: 1-D array ``[a, b, c]`` – ellipsoid semi-axes (m).
-        tcp: 1-D array ``[ra, dec, roll]`` – optical-axis attitude (degrees).
+        quat: 1-D array ``[x, y, z, w]`` – optical-axis attitude quaternion (scipy order).
 
     Returns:
         A new DataFrame with the additional row appended.
@@ -118,9 +120,10 @@ def _fill_setup(
         "shape_axis_a": semi_axes[0],
         "shape_axis_b": semi_axes[1],
         "shape_axis_c": semi_axes[2],
-        "true_attitude_ra": euler_angles[0],
-        "true_attitude_dec": euler_angles[1],
-        "true_attitude_roll": euler_angles[2],
+        "qx": quat[0],
+        "qy": quat[1],
+        "qz": quat[2],
+        "qw": quat[3],
     }
     return pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
@@ -183,15 +186,11 @@ def _calculate_conic_coeffs(
             y_center=row["cam_y_center"],
         )
 
-        euler_zyx_deg = np.array(
-            [
-                row["true_attitude_ra"],
-                row["true_attitude_dec"],
-                row["true_attitude_roll"],
-            ],
+        quat = np.array(
+            [row["qx"], row["qy"], row["qz"], row["qw"]],
             dtype=np.float64,
         )
-        tcp = R.from_euler("zyx", euler_zyx_deg, degrees=True).as_matrix()
+        tcp = R.from_quat(quat).as_matrix()
         tpc = tcp.T
         sat_pos = np.array(
             [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]],
@@ -236,12 +235,13 @@ def setup_expirement(
     )
 
     for tcp, sat_pos in zip(tcps, sat_positions):
+        quat = R.from_matrix(tcp).as_quat()  # scipy order: x, y, z, w
         df = _fill_setup(
             df=df,
             camera=camera,
             sat_position=sat_pos,
             semi_axes=semi_axes,
-            euler_angles=R.from_matrix(tcp).as_euler("zyx", degrees=True),
+            quat=quat,
         )
 
     return df
