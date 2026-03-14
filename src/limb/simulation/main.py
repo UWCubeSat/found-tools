@@ -1,12 +1,13 @@
 import argparse
 from pathlib import Path
-
+from scipy.spatial.transform import Rotation as R
 import numpy as np
 
 from limb.simulation.edge.conic import generate_camera_conic, generateCameraConic, generatePixelConic
 from limb.simulation.metadata.df import _fill_cam_columns, _initialize_sim_df
 from limb.simulation.metadata.state import (
 	_sat_position_boresight,
+	generate_satellite_state,
 	generate_uniform_directions,
 )
 from limb.simulation.render import conic as render_conic
@@ -48,32 +49,22 @@ def _parse_args() -> argparse.Namespace:
 		help="Distance from the center of the ellipsoid to the satellite (meters).",
 	)
 	parser.add_argument(
-		"--edge-offset",
-		type=float,
-		default=None,
-		help=(
-			"Optional physical edge offset used by camera edge-angle sampling. "
-			"Defaults to 10%% of the minimum physical image dimension."
-		),
-	)
-	parser.add_argument(
-		"--edge-angle-mode",
-		type=str,
-		choices=("randomized", "zero"),
-		default="randomized",
-		help="Edge-angle strategy used by the camera.",
-	)
-	parser.add_argument(
 		"--num-satellite-positions",
 		type=int,
 		required=True,
 		help="Number of satellite positions to generate.",
 	)
 	parser.add_argument(
-		"--num-satellite-orientations",
+		"--num-image-spins",
 		type=int,
 		required=True,
-		help="Number of satellite orientations to generate.",
+		help="Number of image spins to generate.",
+	)
+	parser.add_argument(
+		"--num-image-radials",
+		type=int,
+		required=True,
+		help="Number of image radials to generate.",
 	)
 
 	parser.add_argument(
@@ -160,8 +151,10 @@ def _validate_args(args: argparse.Namespace) -> None:
 		raise ValueError("--distance must be > 0.")
 	if args.num_satellite_positions < 1:
 		raise ValueError("--num-satellite-positions must be >= 1.")
-	if args.num_satellite_orientations < 1:
-		raise ValueError("--num-satellite-orientations must be >= 1.")
+	if args.num_image_spins < 1:
+		raise ValueError("--num-image-spins must be >= 1.")
+	if args.num_image_radials < 1:
+		raise ValueError("--num-image-radials must be >= 1.")
 	if args.num_directions < 1:
 		raise ValueError("--num-directions must be >= 1.")
 	if args.x_resolution < 1 or args.y_resolution < 1:
@@ -207,28 +200,35 @@ def main() -> None:  # pragma: no cover
 
 
 	camera = Camera(
-		focalLength=args.focal_length,
-		xPixelPitch=args.x_pixel_pitch,
-		yPixelPitch=args.y_pixel_pitch,
-		xResolution=args.x_resolution,
-		yResolution=args.y_resolution,
-		xCenter=args.x_center,
-		yCenter=args.y_center,
-		edgeOffset=args.edge_offset,
-		edgeAngleMode=args.edge_angle_mode,
+		focal_length=args.focal_length,
+		x_pixel_pitch=args.x_pixel_pitch,
+		y_pixel_pitch=args.y_pixel_pitch,
+		x_resolution=args.x_resolution,
+		y_resolution=args.y_resolution,
+		x_center=args.x_center,
+		y_center=args.y_center,
 	)
 
-	sat_positions, r_tcps = _sat_position_boresight(
+	# sat_positions, r_tcps = _sat_position_boresight(
+	# 	shape_matrix,
+	# 	earth_directions,
+	# 	args.num_satellite_positions,
+	# 	args.distance,
+	# )
+
+	sat_positions, tcps = generate_satellite_state(
 		shape_matrix,
 		earth_directions,
-		args.num_satellite_positions,
 		args.distance,
+		camera,
+		args.num_satellite_positions,
+		args.num_image_spins,
+		args.num_image_radials,
 	)
-
 	df = _initialize_sim_df(sat_positions.shape[0])
 	df = _fill_cam_columns(df, camera)
 
-	tcps = r_tcps.as_matrix() 
+	# tcps = r_tcps.as_matrix() 
 
 	conic_coeffs = []
 	for (tcp, sat_pos) in zip(tcps, sat_positions):
@@ -241,7 +241,7 @@ def main() -> None:  # pragma: no cover
 		
 		df[["true_pos_x", "true_pos_y", "true_pos_z"]] = sat_positions
 		df[["shape_axis_a", "shape_axis_b", "shape_axis_c"]] = np.array(args.semi_axes)
-		df[["true_attitude_ra", "true_attitude_dec", "true_attitude_roll"]] = r_tcps.as_euler("zyx", degrees=True)
+		df[["true_attitude_ra", "true_attitude_dec", "true_attitude_roll"]] = R.from_matrix(tcp).as_euler("zyx", degrees=True)
 
 
 	render_conic.process_simulation(

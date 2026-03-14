@@ -69,7 +69,7 @@ def generate_pixel_conic(c: np.ndarray, camera: Camera) -> np.ndarray:
         calibratedC: 3×3 symmetric conic matrix in pixel coordinates,
                      normalised so calibratedC[0, 0] == 1.
     """
-    k_inv = camera.inverseCalibrationMatrix_
+    k_inv = camera.inverse_calibration_matrix
     calibrated_c = k_inv.T @ c @ k_inv
     return calibrated_c / calibrated_c[0, 0]
 
@@ -155,10 +155,10 @@ def generate_edge_points(
         points: NumPy array of (x, y) pixel coordinates on the conic,
             shape (num_points, 2). Rows with no real solution contain NaN.
     """
-    k_inv = cam.inverseCalibrationMatrix_
+    k_inv = cam.inverse_calibration_matrix
     cam_conic = generate_camera_conic(pos, shape_matrix, orientation)
     pixel_conic = generate_pixel_conic(cam_conic, k_inv)
-    x_points = np.linspace(0, cam.xResolution_ - 1, num_points)
+    x_points = np.linspace(0, cam.x_resolution - 1, num_points)
     return solve_conic(pixel_conic, x_points)
 
 

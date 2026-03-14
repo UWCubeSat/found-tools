@@ -21,12 +21,12 @@ class SimulationMainIntegrationTest(unittest.TestCase):
 			"--earth-point-direction", "1", "0", "0",
 			"--distance", "15",
 			"--num-satellite-positions", "4",
-			"--num-satellite-orientations", "3",
+			"--num-image-spins", "3",
+			"--num-image-radials", "2",
 			"--focal-length", "0.035",
 			"--x-pixel-pitch", "5e-6",
 			"--x-resolution", "1024",
 			"--y-resolution", "1024",
-			"--edge-angle-mode", "zero",
 		])
 
 	def test_main_with_wgs84_earth_geometry(self):
@@ -34,14 +34,13 @@ class SimulationMainIntegrationTest(unittest.TestCase):
 			"limb_simulation",
 			"--earth-point-direction", "1", "0", "0",
 			"--distance", "6800000",
-			"--edge-offset", "80",
 			"--num-satellite-positions", "4",
-			"--num-satellite-orientations", "2",
+			"--num-image-spins", "2",
+			"--num-image-radials", "2",
 			"--focal-length", "0.035",
 			"--x-pixel-pitch", "5e-6",
 			"--x-resolution", "1024",
 			"--y-resolution", "1024",
-			"--edge-angle-mode", "zero",
 		])
 
 

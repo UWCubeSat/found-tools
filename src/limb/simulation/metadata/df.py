@@ -24,8 +24,6 @@ def _initialize_sim_df(size: int) -> pd.DataFrame:
         cam_y_resolution         Sensor height (pixels).
         cam_x_center             Principal point x (pixels).
         cam_y_center             Principal point y (pixels).
-        cam_edge_offset          Edge-exclusion offset (pixels).
-        cam_edge_angle_mode      Edge-angle sampling strategy ('randomized' or 'zero').
 
     Outputs (dependent variables):
         out_pos_x/y/z            Estimated satellite position in world frame (rectangular, m).
@@ -67,8 +65,6 @@ def _initialize_sim_df(size: int) -> pd.DataFrame:
         "cam_y_resolution": pd.Series(dtype="int64"),
         "cam_x_center": pd.Series(dtype="float64"),
         "cam_y_center": pd.Series(dtype="float64"),
-        "cam_edge_offset": pd.Series(dtype="float64"),
-        "cam_edge_angle_mode": pd.Series(dtype="object"),
         # --- estimated position ---
         "out_pos_x": pd.Series(dtype="float64"),
         "out_pos_y": pd.Series(dtype="float64"),
@@ -94,13 +90,12 @@ def _fill_cam_columns(df: pd.DataFrame, camera: Camera) -> pd.DataFrame:
     Returns:
         The same DataFrame with camera columns filled in-place.
     """
-    df["cam_focal_length"]    = camera.focalLength_
-    df["cam_x_pixel_pitch"]   = camera.xPixelPitch_
-    df["cam_y_pixel_pitch"]   = camera.yPixelPitch_
-    df["cam_x_resolution"]    = camera.xResolution_
-    df["cam_y_resolution"]    = camera.yResolution_
-    df["cam_x_center"]        = camera.xCenter_
-    df["cam_y_center"]        = camera.yCenter_
-    df["cam_edge_offset"]     = camera.edgeOffset_
-    df["cam_edge_angle_mode"] = camera.edgeAngleMode_
+    df["cam_focal_length"]    = camera.focal_length
+    df["cam_x_pixel_pitch"]   = camera.x_pixel_pitch
+    df["cam_y_pixel_pitch"]   = camera.y_pixel_pitch
+    df["cam_x_resolution"]    = camera.x_resolution
+    df["cam_y_resolution"]    = camera.y_resolution
+    df["cam_x_center"]        = camera.x_center
+    df["cam_y_center"]        = camera.y_center
+
     return df

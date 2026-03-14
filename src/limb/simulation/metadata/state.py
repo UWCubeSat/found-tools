@@ -61,12 +61,16 @@ def _norm_spheroid(shape_matrix, surface_point):
     sd = shape_matrix @ surface_point
     return sd / np.linalg.norm(sd)
 
-def _rotate_basis(basis, axis, num_rotations):
-    thetas = 2 * np.pi * np.arange(num_rotations) / num_rotations
+def _rotate_basis(basis, axis, thetas):
     rotations = R.from_rotvec(thetas[:, None] * axis).as_matrix()
     return rotations @ basis
 
-def _sat_position_boresight(shape_matrix, earth_point_directions, num_satellite_positions, distance):
+def _sat_position_boresight(
+        shape_matrix, 
+        earth_point_directions, 
+        num_satellite_positions, 
+        distance
+    ):
     """
     Generate satellite positions around points on an ellipsoid.
 
@@ -90,21 +94,76 @@ def _sat_position_boresight(shape_matrix, earth_point_directions, num_satellite_
     for direction in earth_point_directions:
         surface_point = _position_on_surface_ellipsoid(shape_matrix, direction)
         norm = _norm_spheroid(shape_matrix, direction)
+
         norm_basis = R.align_vectors([norm], [[0, 0, 1]])[0].as_matrix()
+        thetas = 2 * np.pi * np.arange(num_satellite_positions) / num_satellite_positions
+        norm_basis_variants = _rotate_basis(norm_basis, norm_basis[:, 2], thetas)
+        
         length = np.sqrt(distance**2 - np.linalg.norm(surface_point) ** 2)
-        norm_basis_variants = _rotate_basis(norm_basis, norm_basis[:, 2], num_satellite_positions)
         for bv in norm_basis_variants:
             sat_to_edge.append(-bv[:, 0])
             sat_positions.append(surface_point + length * bv[:, 0])
 
     sat_positions = np.array(sat_positions)
     sat_to_edge = np.array(sat_to_edge)
-    tcps = R.concatenate([
+    r_tcps = R.concatenate([
         R.align_vectors([edge], [[1, 0, 0]])[0]
         for edge in sat_to_edge
     ])
 
-    return sat_positions, tcps
+    return sat_positions, r_tcps
+
+def generate_satellite_state(
+        shapeMatrix,
+        earthPointDirections,
+        distance,
+        cameraClass,
+        numSatellitePositions,
+        numImageSpins,
+        numImageRadials
+    ):
+    """Generate satellite positions and orientations around an ellipsoid.
+
+    Creates a grid of satellite positions at fixed distance from a target ellipsoid,
+    arranged in a circle around the tangent plane at earthPointDirection. For each
+    position, generates multiple camera orientations by rotating around the boresight.
+
+    Args:
+        shapeMatrix: 3x3 symmetric matrix defining the ellipsoid (diagonal elements
+                     are 1/a² for semi-axes a, b, c).
+        earthPointDirections: Unit vectors (shape N x 3) pointing to target locations on ellipsoid.
+        distance: Satellite distance from origin. Must exceed the maximum semi-axis;
+                  satellites are always outside the ellipsoid body.
+        cameraClass: Camera object with focal length, resolution, and edge-offset properties.
+        numSatellitePositions: Number of positions around the tangent plane.
+        numSatelliteOrientations: Number of orientations per position (boresight angles).
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Satellite positions (shape numSatellitePositions, 3)
+        and orientations (shape numSatelliteOrientations × numSatellitePositions, 3, 3).
+    Raises:
+        AssertionError: If distance <= max semi-axis of the ellipsoid.
+    """
+    sat_positions, r_tcps = _sat_position_boresight(
+        shapeMatrix,
+        earthPointDirections,
+        numSatellitePositions,
+        distance,
+    )
+
+    tcps = r_tcps.as_matrix() 
+
+    oreintation_final = []
+    for tcp in tcps:
+        spin_radial_orientations = []
+        spins = np.linspace(0, 2 * np.pi, numImageSpins, endpoint=False)
+        spin_boresight_basis = _rotate_basis(tcp, tcp[:, 0], spins)
+        for basis in spin_boresight_basis:
+            radials = np.linspace(0, cameraClass.image_max_edge_angle, numImageRadials, endpoint=False)
+            spin_radial_boresight = _rotate_basis(basis, basis[:, 1], radials)
+            spin_radial_orientations.extend(spin_radial_boresight)
+        oreintation_final.extend(spin_radial_orientations)
+    
+    return sat_positions.repeat(numImageSpins * numImageRadials, axis=0), np.array(oreintation_final)
 
 
 # def generateSatelliteState(
