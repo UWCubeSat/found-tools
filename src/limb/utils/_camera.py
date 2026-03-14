@@ -20,9 +20,7 @@ class Camera:
         y_resolution: int,
         x_center: float | None = None,
         y_center: float | None = None,
-        y_pixel_pitch: float | None = None,
-        edge_offset: float | None = None,
-        edge_angle_mode: str = "randomized",
+        y_pixel_pitch: float | None = None
     ) -> None:
         self.focal_length = float(focal_length)
         self.x_resolution = int(x_resolution)
@@ -65,3 +63,18 @@ class Camera:
         if self.edge_angle_mode == "randomized":
             return random.uniform(0.0, self.image_max_edge_angle)
         return 0.0
+
+def focal_length_from_fov(fov: float, resolution: int, pixel_pitch: float) -> float:
+    """Compute focal length from field of view.
+
+    Args:
+        fov: Full field of view in degrees.
+        pixel_pitch: Pixel pitch (m).
+        resolution: Sensor resolution in pixels along the same axis as *fov*.
+
+    Returns:
+        Focal length in metres.
+    """
+    sensor_size = resolution * pixel_pitch
+    return sensor_size / (2.0 * np.tan(np.deg2rad(fov) / 2.0))
+

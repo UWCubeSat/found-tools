@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
+import itertools
 
 from limb.simulation.edge.conic import generate_camera_conic, generate_pixel_conic
-from limb.simulation.metadata.state import generate_satellite_state
-from limb.utils._camera import Camera
+from limb.simulation.metadata.state import generate_satellite_state, generate_uniform_directions
+from limb.utils._camera import Camera, focal_length_from_fov
 
 
 def initialize_sim_df() -> pd.DataFrame:
@@ -180,4 +181,46 @@ def setup_expirement(
         conic_coeffs.append(_conic_matrix_to_coeffs(pixel_conic))
 
     return df, conic_coeffs
+
+def setup_simulation(
+        semi_axes: list,
+        fovs: list,
+        resolutions: list,
+        distances: list,
+        num_earth_points: int,
+        num_positions_per_point: int,
+        num_spins_per_position: int,
+        num_radials_per_spin: int,
+        output_path: str):
+
+    PIXEL_PITCH = 1 # doesn't effect simulation as long as consitent
+
+    expirements = itertools.product(fovs, resolutions, distances)
+    df = initialize_sim_df()
+    conic_coeffs = []
+    earth_directions = generate_uniform_directions(num_earth_points)
+
+
+    for exp in expirements:
+        focal_length = focal_length_from_fov(fov = exp[0], resolution = exp[1], pixel_pitch=PIXEL_PITCH)
+        camera = Camera(
+            focal_length=focal_length,
+            x_pixel_pitch=PIXEL_PITCH,
+            x_resolution=exp[1],
+            y_resolution=exp[1]
+        )
+
+        df, cc = setup_expirement(
+                    df,
+                    semi_axes,
+                    earth_directions,
+                    exp[2],
+                    camera,
+                    num_positions_per_point,
+                    num_spins_per_position,
+                    num_radials_per_spin)
+        conic_coeffs.extend(cc)
+
+    df.to_csv(output_path, index=True)
+    return conic_coeffs
 
