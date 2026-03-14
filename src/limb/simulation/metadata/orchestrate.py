@@ -1,7 +1,9 @@
+import itertools
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
-import itertools
 
 from limb.simulation.edge.conic import generate_camera_conic, generate_pixel_conic
 from limb.simulation.metadata.state import generate_satellite_state, generate_uniform_directions
@@ -141,6 +143,76 @@ def _conic_matrix_to_coeffs(conic: np.ndarray) -> np.ndarray:
         dtype=np.float32,
     )
 
+
+def _calculate_conic_coeffs(
+    df_or_path: pd.DataFrame | str | Path,
+) -> dict[tuple[int, int], tuple[np.ndarray, np.ndarray]]:
+    """Compute conic coefficients from simulation metadata (DataFrame or CSV path).
+
+    Returns one (row_indices, coeffs) pair per (width, height) so the caller can
+    render with filenames that match the DataFrame index.
+
+    Returns
+    -------
+    dict[tuple[int, int], tuple[np.ndarray, np.ndarray]]
+        Keys are (cam_x_resolution, cam_y_resolution). Values are
+        (row_indices, coeffs): row_indices 1d int (df row index per image),
+        coeffs shape (M, 6) float32. Keys are sorted for deterministic iteration.
+    """
+    if isinstance(df_or_path, (str, Path)):
+        df = pd.read_csv(df_or_path, index_col=0)
+    else:
+        df = df_or_path
+
+    out: dict[tuple[int, int], tuple[list[int], list[np.ndarray]]] = {}
+
+    for i in range(len(df)):
+        row = df.iloc[i]
+        semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
+        shape_matrix = _shape_matrix_from_axes(semi_axes)
+
+        width = int(row["cam_x_resolution"])
+        height = int(row["cam_y_resolution"])
+        camera = Camera(
+            focal_length=row["cam_focal_length"],
+            x_pixel_pitch=row["cam_x_pixel_pitch"],
+            y_pixel_pitch=row["cam_y_pixel_pitch"],
+            x_resolution=width,
+            y_resolution=height,
+            x_center=row["cam_x_center"],
+            y_center=row["cam_y_center"],
+        )
+
+        euler_zyx_deg = np.array(
+            [
+                row["true_attitude_ra"],
+                row["true_attitude_dec"],
+                row["true_attitude_roll"],
+            ],
+            dtype=np.float64,
+        )
+        tcp = R.from_euler("zyx", euler_zyx_deg, degrees=True).as_matrix()
+        tpc = tcp.T
+        sat_pos = np.array(
+            [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]],
+            dtype=np.float64,
+        )
+        rc = tpc @ sat_pos
+
+        image_conic = generate_camera_conic(rc, shape_matrix, tpc)
+        pixel_conic = generate_pixel_conic(image_conic, camera)
+        key = (width, height)
+        if key not in out:
+            out[key] = ([], [])
+        out[key][0].append(i)
+        out[key][1].append(_conic_matrix_to_coeffs(pixel_conic))
+
+    return {
+        k: (np.array(idxs, dtype=np.int64), np.array(v, dtype=np.float32))
+        for k, (idxs, v) in sorted(out.items())
+    }
+
+
 def setup_expirement(
         df: pd.DataFrame,
         semi_axes,
@@ -150,7 +222,7 @@ def setup_expirement(
         num_satellite_positions,
         num_image_spins,
         num_image_radials) -> pd.DataFrame:
-
+    """Append rows to the simulation DataFrame for one experiment (one camera, one distance)."""
     shape_matrix = _shape_matrix_from_axes(semi_axes)
 
     sat_positions, tcps = generate_satellite_state(
@@ -163,24 +235,57 @@ def setup_expirement(
         num_image_radials,
     )
 
-    conic_coeffs = []
     for tcp, sat_pos in zip(tcps, sat_positions):
         df = _fill_setup(
             df=df,
             camera=camera,
             sat_position=sat_pos,
             semi_axes=semi_axes,
-            euler_angles = R.from_matrix(tcp).as_euler("zyx", degrees=True)
+            euler_angles=R.from_matrix(tcp).as_euler("zyx", degrees=True),
         )
 
-        tpc = tcp.T  # Convert to world-to-camera rotation matrices.
-        sph_pos = tpc @ sat_pos.T
+    return df
 
-        image_conic = generate_camera_conic(sph_pos, shape_matrix, tpc)
-        pixel_conic = generate_pixel_conic(image_conic, camera)
-        conic_coeffs.append(_conic_matrix_to_coeffs(pixel_conic))
+def _setup_simulation(
+        semi_axes: list,
+        fovs: list,
+        resolutions: list,
+        distances: list,
+        num_earth_points: int,
+        num_positions_per_point: int,
+        num_spins_per_position: int,
+        num_radials_per_spin: int,
+) -> pd.DataFrame:
+    """Build the simulation DataFrame (no I/O). Caller may write CSV or use in memory."""
+    PIXEL_PITCH = 1  # doesn't affect simulation as long as consistent
 
-    return df, conic_coeffs
+    expirements = itertools.product(fovs, resolutions, distances)
+    df = initialize_sim_df()
+    earth_directions = generate_uniform_directions(num_earth_points)
+
+    for exp in expirements:
+        focal_length = focal_length_from_fov(
+            fov=exp[0], resolution=exp[1], pixel_pitch=PIXEL_PITCH
+        )
+        camera = Camera(
+            focal_length=focal_length,
+            x_pixel_pitch=PIXEL_PITCH,
+            x_resolution=exp[1],
+            y_resolution=exp[1],
+        )
+        df = setup_expirement(
+            df,
+            semi_axes,
+            earth_directions,
+            exp[2],
+            camera,
+            num_positions_per_point,
+            num_spins_per_position,
+            num_radials_per_spin,
+        )
+
+    return df
+
 
 def setup_simulation(
         semi_axes: list,
@@ -191,36 +296,18 @@ def setup_simulation(
         num_positions_per_point: int,
         num_spins_per_position: int,
         num_radials_per_spin: int,
-        output_path: str):
-
-    PIXEL_PITCH = 1 # doesn't effect simulation as long as consitent
-
-    expirements = itertools.product(fovs, resolutions, distances)
-    df = initialize_sim_df()
-    conic_coeffs = []
-    earth_directions = generate_uniform_directions(num_earth_points)
-
-
-    for exp in expirements:
-        focal_length = focal_length_from_fov(fov = exp[0], resolution = exp[1], pixel_pitch=PIXEL_PITCH)
-        camera = Camera(
-            focal_length=focal_length,
-            x_pixel_pitch=PIXEL_PITCH,
-            x_resolution=exp[1],
-            y_resolution=exp[1]
-        )
-
-        df, cc = setup_expirement(
-                    df,
-                    semi_axes,
-                    earth_directions,
-                    exp[2],
-                    camera,
-                    num_positions_per_point,
-                    num_spins_per_position,
-                    num_radials_per_spin)
-        conic_coeffs.extend(cc)
-
+        output_path: str,
+) -> None:
+    """Run simulation grid, write metadata to CSV. Returns nothing."""
+    df = _setup_simulation(
+        semi_axes,
+        fovs,
+        resolutions,
+        distances,
+        num_earth_points,
+        num_positions_per_point,
+        num_spins_per_position,
+        num_radials_per_spin,
+    )
     df.to_csv(output_path, index=True)
-    return conic_coeffs
 

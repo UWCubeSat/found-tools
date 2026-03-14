@@ -13,11 +13,40 @@ def save_image_worker(args):
 
 
 def process_simulation(
-    coeffs_nx6, width, height, output_folder, batch_size=200, sigma=2.0
+    coeffs_nx6,
+    width,
+    height,
+    output_folder,
+    batch_size=200,
+    sigma=2.0,
+    row_indices=None,
 ):
+    """Render conic coefficients to images.
+
+    Parameters
+    ----------
+    coeffs_nx6 : array-like
+        Shape (N, 6) conic coefficients.
+    width, height : int
+        Image dimensions (same for all in batch).
+    output_folder : str
+        Directory to write images (no subfolders).
+    batch_size : int
+        Number of images per batch.
+    sigma : float
+        Gaussian blur sigma for edge.
+    row_indices : array-like, optional
+        Shape (N,) integer indices for filenames. If provided, images are saved
+        as img_{row_indices[j]:06d}.png so they match a DataFrame row index.
+        If None, uses 0..N-1.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(output_folder, exist_ok=True)
     n_total = coeffs_nx6.shape[0]
+    if row_indices is not None:
+        row_indices = np.asarray(row_indices, dtype=np.int64)
+        if row_indices.shape[0] != n_total:
+            raise ValueError("row_indices length must match coeffs_nx6 row count")
 
     x = torch.linspace(0, width - 1, steps=width, device=device)
     y = torch.linspace(0, height - 1, steps=height, device=device)
@@ -64,10 +93,20 @@ def process_simulation(
                 intensity = torch.exp(-(dist**2) / (2 * sigma**2))
 
             batch_cpu = intensity.cpu().numpy()
-            save_tasks = [
-                (batch_cpu[j], os.path.join(output_folder, f"img_{i + j:06d}.png"))
-                for j in range(batch_cpu.shape[0])
-            ]
+            if row_indices is not None:
+                batch_indices = row_indices[i:upper]
+                save_tasks = [
+                    (
+                        batch_cpu[j],
+                        os.path.join(output_folder, f"img_{batch_indices[j]:06d}.png"),
+                    )
+                    for j in range(batch_cpu.shape[0])
+                ]
+            else:
+                save_tasks = [
+                    (batch_cpu[j], os.path.join(output_folder, f"img_{i + j:06d}.png"))
+                    for j in range(batch_cpu.shape[0])
+                ]
 
             list(executor.map(save_image_worker, save_tasks))
 
