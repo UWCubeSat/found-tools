@@ -269,7 +269,7 @@ def _setup_simulation(
         num_radials_per_spin: int,
 ) -> pd.DataFrame:
     """Build the simulation DataFrame (no I/O). Caller may write CSV or use in memory."""
-    PIXEL_PITCH = 1  # doesn't affect simulation as long as consistent
+    PIXEL_PITCH = 5e-6  # doesn't affect simulation as long as consistent
 
     expirements = itertools.product(fovs, resolutions, distances)
     df = initialize_sim_df()

@@ -23,8 +23,8 @@ limb_simulation \
   --num-positions-per-point 2 \
   --num-spins-per-position 2 \
   --num-radials-per-spin 2 \
-  --output-csv /tmp/sim_metadata.csv \
-  --output-folder /tmp/sim_images \
+  --output-csv sim_metadata.csv \
+  --output-folder sim_images \
   --batch-size 100
 ```
 
