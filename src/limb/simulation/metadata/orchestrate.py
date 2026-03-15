@@ -32,6 +32,12 @@ def initialize_sim_df() -> pd.DataFrame:
 
     Outputs (dependent variables):
         out_pos_x/y/z            Estimated satellite position in world frame (rectangular, m).
+    
+    Runtime metrics (fill when measuring the FOUND binary):
+        runtime_sec             Wall-clock seconds for the run (e.g. time.perf_counter()).
+        instructions            CPU instruction count (e.g. perf stat -e instructions).
+        bytes_allocated         Total bytes allocated (e.g. Valgrind memcheck), optional.
+        allocations             Number of alloc/free calls, optional.
 
     Generate (generated helper variables):
         true_x_centroid          True limb centroid x in pixel coordinates.
@@ -44,9 +50,8 @@ def initialize_sim_df() -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        Empty DataFrame with all columns typed as float64 except
-        ``cam_x_resolution``, ``cam_y_resolution`` (int64) and
-        ``cam_edge_angle_mode`` (object/str).
+        Empty DataFrame with all columns. float64/int64/bool as noted; optional
+        metric columns may be left NaN/empty.
     """
     columns = {
         # --- true state ---
@@ -75,6 +80,11 @@ def initialize_sim_df() -> pd.DataFrame:
         "out_pos_x": pd.Series(dtype="float64"),
         "out_pos_y": pd.Series(dtype="float64"),
         "out_pos_z": pd.Series(dtype="float64"),
+        # --- runtime metrics ---
+        "runtime_sec": pd.Series(dtype="float64"),
+        "instructions": pd.Series(dtype="Int64"),
+        "bytes_allocated": pd.Series(dtype="Int64"),
+        "allocations": pd.Series(dtype="Int64"),
         # --- true measurements ---
         "true_x_centroid": pd.Series(dtype="float64"),
         "true_y_centroid": pd.Series(dtype="float64"),
