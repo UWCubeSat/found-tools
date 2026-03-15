@@ -232,6 +232,8 @@ def setup_expirement(
         num_image_spins,
         num_image_radials) -> pd.DataFrame:
     """Append rows to the simulation DataFrame for one experiment (one camera, one distance)."""
+    max_axis = max(semi_axes)
+    assert distance > max_axis, f"distance {distance} must be greater than all semi_axes (max {max_axis})"
     shape_matrix = _shape_matrix_from_axes(semi_axes)
 
     sat_positions, tcps = generate_satellite_state(
