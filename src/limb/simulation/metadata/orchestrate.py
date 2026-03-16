@@ -159,25 +159,26 @@ def _conic_matrix_to_coeffs(conic: np.ndarray) -> np.ndarray:
 
 def _calculate_conic_coeffs(
     df_or_path: pd.DataFrame | str | Path,
-) -> dict[tuple[int, int], tuple[np.ndarray, np.ndarray]]:
+) -> dict[tuple[int, int], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     """Compute conic coefficients from simulation metadata (DataFrame or CSV path).
 
-    Returns one (row_indices, coeffs) pair per (width, height) so the caller can
+    Returns one (row_indices, coeffs, centroid) pair per (width, height) so the caller can
     render with filenames that match the DataFrame index.
 
     Returns
     -------
-    dict[tuple[int, int], tuple[np.ndarray, np.ndarray]]
+    dict[tuple[int, int], tuple[np.ndarray, np.ndarray, tuple[float32, float32]]]
         Keys are (cam_x_resolution, cam_y_resolution). Values are
-        (row_indices, coeffs): row_indices 1d int (df row index per image),
-        coeffs shape (M, 6) float32. Keys are sorted for deterministic iteration.
+        (row_indices, coeffs, centroid): row_indices 1d int (df row index per image),
+        coeffs shape (M, 6) float32. cal_mat
+        Keys are sorted for deterministic iteration.
     """
     if isinstance(df_or_path, (str, Path)):
         df = pd.read_csv(df_or_path, index_col=0)
     else:
         df = df_or_path
 
-    out: dict[tuple[int, int], tuple[list[int], list[np.ndarray]]] = {}
+    out: dict[tuple[int, int], tuple[list[int], list[np.ndarray], list[np.ndarray], list[np.ndarray]]] = {}
 
     for i in range(len(df)):
         row = df.iloc[i]
@@ -207,20 +208,23 @@ def _calculate_conic_coeffs(
             dtype=np.float64,
         )
         rc = tpc @ sat_pos
-
+        
         image_conic = generate_camera_conic(rc, shape_matrix, tpc)
         pixel_conic = generate_pixel_conic(image_conic, camera)
+
         key = (width, height)
         if key not in out:
-            out[key] = ([], [])
+            out[key] = ([], [], [], [])
         out[key][0].append(i)
         out[key][1].append(_conic_matrix_to_coeffs(pixel_conic))
+        out[key][2].append(camera.inverse_calibration_matrix),
+        out[key][3].append(rc),
+        
 
     return {
-        k: (np.array(idxs, dtype=np.int64), np.array(v, dtype=np.float32))
-        for k, (idxs, v) in sorted(out.items())
+        k: (np.array(idxs, dtype=np.int64), np.array(v, dtype=np.float32), np.array(c, dtype=np.float32), np.array(r, dtype=np.float32))
+        for k, (idxs, v, c, r) in sorted(out.items())
     }
-
 
 def setup_expirement(
         df: pd.DataFrame,

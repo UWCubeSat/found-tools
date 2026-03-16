@@ -150,15 +150,16 @@ def main() -> None:  # pragma: no cover
         output_path=str(args.output_csv),
     )
 
-    coeffs_by_resolution = _calculate_conic_coeffs(args.output_csv)
-
+    coeffs_and_centroid_by_resolution = _calculate_conic_coeffs(args.output_csv)
     args.output_folder.mkdir(parents=True, exist_ok=True)
-    for (width, height), (row_indices, coeffs) in coeffs_by_resolution.items():
+    for (width, height), (row_indices, coeffs, K, rc) in coeffs_and_centroid_by_resolution.items():
         render_conic.process_simulation(
             coeffs_nx6=render_conic.torch.from_numpy(coeffs),
             width=width,
             height=height,
             output_folder=str(args.output_folder),
+            K=render_conic.torch.from_numpy(K),
+            rc=render_conic.torch.from_numpy(rc),
             batch_size=args.batch_size,
             sigma=args.sigma,
             row_indices=row_indices,
