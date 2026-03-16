@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 
-from limb.simulation.edge.conic import generate_camera_conic, generate_pixel_conic
+from limb.simulation.edge.conic import generate_camera_conic, generate_pixel_conic, _conic_matrix_to_coeffs, _shape_matrix_from_axes
 from limb.simulation.metadata.state import generate_satellite_state, generate_uniform_directions
 from limb.utils._camera import Camera, focal_length_from_fov
 
@@ -21,7 +21,7 @@ def initialize_sim_df() -> pd.DataFrame:
         shape_axis_a/b/c         Ellipsoid semi-axes (m); diagonal entries of shape matrix.
         atmosphere_blur          Gaussian blur sigma applied to the limb edge (pixels).
 
-    Camera parameters (one scalar column per intrinsic):
+    Camera parameters (one scalar column rper intrinsic):
         cam_focal_length         Focal length (m).
         cam_x_pixel_pitch        Pixel pitch in x (m).
         cam_y_pixel_pitch        Pixel pitch in y (m).
@@ -137,24 +137,40 @@ def _fill_setup(
     }
     return pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
-def _shape_matrix_from_axes(semi_axes: list[float]) -> np.ndarray:
-    a, b, c = semi_axes
-    return np.diag([1.0 / (a * a), 1.0 / (b * b), 1.0 / (c * c)])
 
+def _conic_coeffs_from_row(row: pd.Series) -> np.ndarray:
+    """Compute conic coefficients (a,b,c,d,e,f) from a single simulation metadata row.
 
-def _conic_matrix_to_coeffs(conic: np.ndarray) -> np.ndarray:
-    # Conic matrix C corresponds to Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0.
-    return np.array(
-        [
-            conic[0, 0],
-            2.0 * conic[0, 1],
-            conic[1, 1],
-            2.0 * conic[0, 2],
-            2.0 * conic[1, 2],
-            conic[2, 2],
-        ],
-        dtype=np.float32,
+    Row must contain: shape_axis_a/b/c, cam_*, qx,qy,qz,qw, true_pos_x/y/z.
+    Returns shape (6,) float64.
+    """
+    semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
+    shape_matrix = _shape_matrix_from_axes(semi_axes)
+    width = int(row["cam_x_resolution"])
+    height = int(row["cam_y_resolution"])
+    camera = Camera(
+        focal_length=row["cam_focal_length"],
+        x_pixel_pitch=row["cam_x_pixel_pitch"],
+        y_pixel_pitch=row["cam_y_pixel_pitch"],
+        x_resolution=width,
+        y_resolution=height,
+        x_center=row["cam_x_center"],
+        y_center=row["cam_y_center"],
     )
+    quat = np.array(
+        [row["qx"], row["qy"], row["qz"], row["qw"]],
+        dtype=np.float64,
+    )
+    tcp = R.from_quat(quat).as_matrix()
+    tpc = tcp.T
+    sat_pos = np.array(
+        [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]],
+        dtype=np.float64,
+    )
+    rc = tpc @ sat_pos
+    image_conic = generate_camera_conic(rc, shape_matrix, tpc)
+    pixel_conic = generate_pixel_conic(image_conic, camera)
+    return np.array(_conic_matrix_to_coeffs(pixel_conic), dtype=np.float64)
 
 
 def _calculate_conic_coeffs(

@@ -13,13 +13,16 @@ Typical usage::
     cam = Camera(focal_length, pixel_size, x_res, y_res)
     TPC = sphericalToRotationDegrees(ra, dec, roll)
     rc = TPC @ rp                  # world position → camera frame
-    points = generateEdgePoints(rc, Ap, TPC, num_points, cam)
+    points = generateEdgePoints(rc, Ap, TPC, cam)
 """
 
 import numpy as np
 
 from limb.utils._camera import Camera
 
+def _shape_matrix_from_axes(semi_axes: list[float]) -> np.ndarray:
+    a, b, c = semi_axes
+    return np.diag([1.0 / (a * a), 1.0 / (b * b), 1.0 / (c * c)])
 
 def generate_camera_conic(
     rc: np.ndarray,
@@ -74,75 +77,113 @@ def generate_pixel_conic(c: np.ndarray, camera: Camera) -> np.ndarray:
     return calibrated_c / calibrated_c[0, 0]
 
 
-def solve_quadratic_y(matrix_a: np.ndarray, x_val: float):
-    """Solve for y in the quadratic form [x, y, 1] A [x, y, 1]ᵀ = 0.
-
-    Args:
-        matrix_a: 3×3 NumPy array representing the symmetric quadratic form.
-        x_val:    The known x-coordinate.
-
-    Returns:
-        A tuple of real roots (y1, y2) if they exist, or None if the roots
-        are complex or no solution exists.
-    """
-    a = matrix_a[1, 1]
-    b = (matrix_a[0, 1] + matrix_a[1, 0]) * x_val + (matrix_a[1, 2] + matrix_a[2, 1])
-    c = (
-        matrix_a[0, 0] * x_val**2
-        + (matrix_a[0, 2] + matrix_a[2, 0]) * x_val
-        + matrix_a[2, 2]
+def _conic_matrix_to_coeffs(conic: np.ndarray) -> np.ndarray:
+    # Conic matrix C corresponds to Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0.
+    return np.array(
+        [
+            conic[0, 0],
+            2.0 * conic[0, 1],
+            conic[1, 1],
+            2.0 * conic[0, 2],
+            2.0 * conic[1, 2],
+            conic[2, 2],
+        ],
+        dtype=np.float32,
     )
 
-    if np.isclose(a, 0):
-        if np.isclose(b, 0):
-            return None
-        return (-c / b,)
 
-    discriminant = b**2 - 4 * a * c
-    if discriminant < 0:
-        return None
-    if np.isclose(discriminant, 0):
-        return (-b / (2 * a),)
+def solve_general_conic(
+    a: float,
+    b: float,
+    c: float,
+    d: float,
+    e: float,
+    f: float,
+    v0: float,
+    mode: str,
+    *,
+    eps: float | None = None,
+) -> tuple[float, ...] | None:
+    """Solve ax²+bxy+cy²+dx+ey+f = 0 for the unknown variable given v0.
 
-    sqrt_d = np.sqrt(discriminant)
-    return ((-b + sqrt_d) / (2 * a), (-b - sqrt_d) / (2 * a))
-
-
-def solve_conic(conic: np.ndarray, x_vals: np.ndarray) -> np.ndarray:
-    """Sample y-coordinates on a conic for an array of x-values.
-
-    For each x, solves the quadratic form [x, y, 1] A [x, y, 1]ᵀ = 0 for y.
-    When two real roots exist the one with the smaller absolute value is taken;
-    rows where no real solution exists are filled with NaN.
+    Algorithm: SolveGeneralConic — classify and solve quadratic in one variable.
 
     Args:
-        conic:  3×3 symmetric conic matrix in pixel coordinates.
-        x_vals:  1-D array of x pixel coordinates, shape (N,).
+        a, b, c, d, e, f: Conic coefficients (ax²+bxy+cy²+dx+ey+f = 0).
+        v0: Known value (x when mode='solve_y', y when mode='solve_x').
+        mode: 'solve_y' to solve for y given x=v0; 'solve_x' to solve for x given y=v0.
+        eps: Tolerance for near-zero (default: 1e-10).
 
     Returns:
-        points: Array of (x, y) pixel coordinates, shape (N, 2).
-                Rows where no real solution exists contain NaN.
+        Tuple of 0, 1, or 2 real values for the unknown; None if no real solution
+        or degenerate (e.g. whole line satisfies).
     """
-    points = np.full((len(x_vals), 2), np.nan)
-    for i, x in enumerate(x_vals):
-        roots = solve_quadratic_y(conic, x)
-        if roots is not None:
-            points[i] = [x, min(roots, key=abs)]
-    return points
+    if eps is None:
+        eps = 1e-10
+
+    if mode == "solve_y":
+        P, Q, R = c, b * v0 + e, a * v0**2 + d * v0 + f
+    elif mode == "solve_x":
+        P, Q, R = a, b * v0 + d, c * v0**2 + e * v0 + f
+    else:
+        raise ValueError("mode must be 'solve_y' or 'solve_x'")
+
+    if abs(P) < eps:
+        if abs(Q) < eps:
+            return None  # 0=0 (ALL) or 0=R≠0 (NONE) — no finite set to return
+        return (-R / Q,)
+    delta = Q * Q - 4 * P * R
+    if delta < -eps:
+        return None
+    if abs(delta) <= eps:
+        return (-Q / (2 * P),)
+    sqrt_d = np.sqrt(delta)
+    return ((-Q + sqrt_d) / (2 * P), (-Q - sqrt_d) / (2 * P))
+
+
+def sample_conic_at_all_rows_columns(conic: np.ndarray, camera: Camera) -> np.ndarray:
+    """Solve conic at every row and column (step 1); return in-image points.
+
+    Steps x from 0 to x_resolution - 1 and, for each x, solves for y.
+    Steps y from 0 to y_resolution - 1 and, for each y, solves for x.
+    Only points with 0 ≤ x < x_resolution and 0 ≤ y < y_resolution are returned.
+
+    Args:
+        conic: 3×3 symmetric conic matrix in pixel coordinates.
+        camera: Camera supplying x_resolution and y_resolution.
+
+    Returns:
+        points: (N, 2) array of (x, y) pixel coordinates on the conic inside the image.
+    """
+    a, b, c, d, e, f = _conic_matrix_to_coeffs(conic)
+    points: list[list[float]] = []
+    for x in range(camera.x_resolution):
+        sols = solve_general_conic(a, b, c, d, e, f, float(x), "solve_y")
+        if sols is not None:
+            for y in sols:
+                if 0 <= y < camera.y_resolution:
+                    points.append([float(x), float(y)])
+    for y in range(camera.y_resolution):
+        sols = solve_general_conic(a, b, c, d, e, f, float(y), "solve_x")
+        if sols is not None:
+            for x in sols:
+                if 0 <= x < camera.x_resolution:
+                    points.append([float(x), float(y)])
+    return np.array(points, dtype=np.float64) if points else np.empty((0, 2), dtype=np.float64)
 
 
 def generate_edge_points(
     pos: np.ndarray,
     shape_matrix: np.ndarray,
     orientation: np.ndarray,
-    num_points: int,
     cam: Camera,
 ) -> np.ndarray:
     """Generate points on the projected horizon ellipse in pixel coordinates.
 
     Builds the conic locus from the given pose, projects it into pixel
-    coordinates using the camera's intrinsics, then samples it at evenly
-    spaced x-values across the image width.
+    coordinates, then solves at every row and column (step 1) using the
+    general conic algorithm. Only points inside the image
+    (0 ≤ x < x_resolution, 0 ≤ y < y_resolution) are returned.
 
     Args:
         pos:         Satellite position in camera coordinates, shape (3,).
@@ -151,24 +192,20 @@ def generate_edge_points(
                      semi-axis.
         orientation: Rotation matrix from world to camera coordinates
                      (TPC), shape (3, 3).
-        num_points:   Number of points to sample along the conic.
-        cam:         :class:`~found_CLI_tools.cameraGeometry.Camera` object
-                     supplying intrinsics and resolution.
+        cam:         Camera object supplying intrinsics and resolution.
 
     Returns:
-        points: NumPy array of (x, y) pixel coordinates on the conic,
-            shape (num_points, 2). Rows with no real solution contain NaN.
+        points: NumPy array of (x, y) pixel coordinates on the conic that
+            lie within the image, shape (M, 2).
     """
-    k_inv = cam.inverse_calibration_matrix
     cam_conic = generate_camera_conic(pos, shape_matrix, orientation)
-    pixel_conic = generate_pixel_conic(cam_conic, k_inv)
-    x_points = np.linspace(0, cam.x_resolution - 1, num_points)
-    return solve_conic(pixel_conic, x_points)
+    pixel_conic = generate_pixel_conic(cam_conic, cam)
+    return sample_conic_at_all_rows_columns(pixel_conic, cam)
 
 
 # Backward-compatible aliases for previous camelCase API names.
 generateCameraConic = generate_camera_conic
 generatePixelConic = generate_pixel_conic
-solveQuadraticY = solve_quadratic_y
-solveConic = solve_conic
+solveGeneralConic = solve_general_conic
+sampleConicAtAllRowsColumns = sample_conic_at_all_rows_columns
 generateEdgePoints = generate_edge_points
