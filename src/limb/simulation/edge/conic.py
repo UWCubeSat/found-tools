@@ -224,7 +224,6 @@ def generate_edge_points(
     shape_matrix: np.ndarray,
     orientation: np.ndarray,
     cam: Camera,
-    *,
     gaussian_sigma: Optional[float | tuple[float, float]] = None,
     n_false_points: int = 0,
     truncate: int = 0,
@@ -282,7 +281,6 @@ def generate_edge_points(
 def add_point_noise(
     points: np.ndarray,
     camera: Camera,
-    *,
     gaussian_sigma: Optional[float | tuple[float, float]] = None,
     n_false_points: int = 0,
     truncate: int = 0,

@@ -189,7 +189,6 @@ def _conic_from_row(row: pd.Series) -> np.ndarray:
 
 def points_from_row(
     row: pd.Series,
-    *,
     gaussian_sigma: float | tuple[float, float] | None = None,
     n_false_points: int = 0,
     truncate: int = 1,
