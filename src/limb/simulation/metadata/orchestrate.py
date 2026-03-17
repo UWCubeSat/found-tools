@@ -5,8 +5,17 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 
-from limb.simulation.edge.conic import generate_camera_conic, generate_pixel_conic, _conic_matrix_to_coeffs, _shape_matrix_from_axes, sample_conic_at_all_rows_columns, sort_points_polar_order, generate_edge_points
-from limb.simulation.metadata.state import generate_satellite_state, generate_uniform_directions
+from limb.simulation.edge.conic import (
+    generate_camera_conic,
+    generate_edge_points,
+    generate_pixel_conic,
+    _conic_matrix_to_coeffs,
+    _shape_matrix_from_axes,
+)
+from limb.simulation.metadata.state import (
+    generate_satellite_state,
+    generate_uniform_directions,
+)
 from limb.utils._camera import Camera, focal_length_from_fov
 
 
@@ -32,7 +41,7 @@ def initialize_sim_df() -> pd.DataFrame:
 
     Outputs (dependent variables):
         out_pos_x/y/z            Estimated satellite position in world frame (rectangular, m).
-    
+
     Runtime metrics (fill when measuring the FOUND binary):
         runtime_sec             Wall-clock seconds for the run (e.g. time.perf_counter()).
         instructions            CPU instruction count (e.g. perf stat -e instructions).
@@ -98,11 +107,11 @@ def initialize_sim_df() -> pd.DataFrame:
 
 
 def _fill_setup(
-        df: pd.DataFrame,
-        camera: Camera,
-        sat_position: np.ndarray,
-        semi_axes: np.ndarray,
-        quat: np.ndarray,
+    df: pd.DataFrame,
+    camera: Camera,
+    sat_position: np.ndarray,
+    semi_axes: np.ndarray,
+    quat: np.ndarray,
 ) -> pd.DataFrame:
     """Add a new row to the simulation DataFrame with all input columns populated.
 
@@ -161,10 +170,23 @@ def _conic_from_row(row: pd.Series) -> np.ndarray:
     image_conic = generate_camera_conic(rc, shape_matrix, tpc)
     return generate_pixel_conic(image_conic, camera)
 
+
 def points_from_row(row: pd.Series) -> np.ndarray:
-    conic = _conic_from_row(row)
-    points = sample_conic_at_all_rows_columns(conic, Camera.from_row(row))
-    return sort_points_polar_order(points)
+    camera = Camera.from_row(row)
+    semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
+    shape_matrix = _shape_matrix_from_axes(semi_axes)
+    quat = np.array(
+        [row["qx"], row["qy"], row["qz"], row["qw"]],
+        dtype=np.float64,
+    )
+    tpc = R.from_quat(quat).as_matrix().T
+    sat_pos = np.array(
+        [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]],
+        dtype=np.float64,
+    )
+    rc = tpc @ sat_pos
+    return generate_edge_points(rc, shape_matrix, tpc, camera)
+
 
 def _calculate_conic_coeffs(
     df_or_path: pd.DataFrame | str | Path,
@@ -187,39 +209,60 @@ def _calculate_conic_coeffs(
     else:
         df = df_or_path
 
-    out: dict[tuple[int, int], tuple[list[int], list[np.ndarray], list[np.ndarray], list[np.ndarray]]] = {}
+    out: dict[
+        tuple[int, int],
+        tuple[list[int], list[np.ndarray], list[np.ndarray], list[np.ndarray]],
+    ] = {}
 
     for idx, row in df.iterrows():
         camera = Camera.from_row(row)
         conic = _conic_from_row(row)
         coeffs = _conic_matrix_to_coeffs(conic)
+        quat = np.array(
+            [row["qx"], row["qy"], row["qz"], row["qw"]],
+            dtype=np.float64,
+        )
+        tpc = R.from_quat(quat).as_matrix().T
+        sat_pos = np.array(
+            [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]],
+            dtype=np.float64,
+        )
+        rc = tpc @ sat_pos
 
         key = (camera.x_resolution, camera.y_resolution)
         if key not in out:
             out[key] = ([], [], [], [])
-        out[key][0].append(i)
+        out[key][0].append(idx)
         out[key][1].append(coeffs)
-        out[key][2].append(camera.inverse_calibration_matrix),
-        out[key][3].append(rc),
-        
+        out[key][2].append(camera.inverse_calibration_matrix)
+        out[key][3].append(rc)
 
     return {
-        k: (np.array(idxs, dtype=np.int64), np.array(v, dtype=np.float32), np.array(c, dtype=np.float32), np.array(r, dtype=np.float32))
+        k: (
+            np.array(idxs, dtype=np.int64),
+            np.array(v, dtype=np.float32),
+            np.array(c, dtype=np.float32),
+            np.array(r, dtype=np.float32),
+        )
         for k, (idxs, v, c, r) in sorted(out.items())
     }
 
+
 def setup_expirement(
-        df: pd.DataFrame,
-        semi_axes,
-        earth_point_directions,
-        distance,
-        camera,
-        num_satellite_positions,
-        num_image_spins,
-        num_image_radials) -> pd.DataFrame:
+    df: pd.DataFrame,
+    semi_axes,
+    earth_point_directions,
+    distance,
+    camera,
+    num_satellite_positions,
+    num_image_spins,
+    num_image_radials,
+) -> pd.DataFrame:
     """Append rows to the simulation DataFrame for one experiment (one camera, one distance)."""
     max_axis = max(semi_axes)
-    assert distance > max_axis, f"distance {distance} must be greater than all semi_axes (max {max_axis})"
+    assert distance > max_axis, (
+        f"distance {distance} must be greater than all semi_axes (max {max_axis})"
+    )
     shape_matrix = _shape_matrix_from_axes(semi_axes)
 
     sat_positions, tcps = generate_satellite_state(
@@ -244,15 +287,16 @@ def setup_expirement(
 
     return df
 
+
 def _setup_simulation(
-        semi_axes: list,
-        fovs: list,
-        resolutions: list,
-        distances: list,
-        num_earth_points: int,
-        num_positions_per_point: int,
-        num_spins_per_position: int,
-        num_radials_per_spin: int,
+    semi_axes: list,
+    fovs: list,
+    resolutions: list,
+    distances: list,
+    num_earth_points: int,
+    num_positions_per_point: int,
+    num_spins_per_position: int,
+    num_radials_per_spin: int,
 ) -> pd.DataFrame:
     """Build the simulation DataFrame (no I/O). Caller may write CSV or use in memory."""
     PIXEL_PITCH = 5e-6  # doesn't affect simulation as long as consistent
@@ -286,15 +330,15 @@ def _setup_simulation(
 
 
 def setup_simulation(
-        semi_axes: list,
-        fovs: list,
-        resolutions: list,
-        distances: list,
-        num_earth_points: int,
-        num_positions_per_point: int,
-        num_spins_per_position: int,
-        num_radials_per_spin: int,
-        output_path: str,
+    semi_axes: list,
+    fovs: list,
+    resolutions: list,
+    distances: list,
+    num_earth_points: int,
+    num_positions_per_point: int,
+    num_spins_per_position: int,
+    num_radials_per_spin: int,
+    output_path: str,
 ) -> None:
     """Run simulation grid, write metadata to CSV. Returns nothing."""
     df = _setup_simulation(
@@ -308,4 +352,3 @@ def setup_simulation(
         num_radials_per_spin,
     )
     df.to_csv(output_path, index=True)
-

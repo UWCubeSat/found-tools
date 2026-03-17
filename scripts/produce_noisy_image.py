@@ -1,4 +1,5 @@
 """Produce a noisy image using limb.noise_generator_image (non-interactive)."""
+
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from limb.noise_generator_image.noise import (
     apply_discretization,
     apply_radial_distortion,
 )
+
 
 def main():
     input_path = Path("sim_images/img_000000.png")
@@ -29,6 +31,7 @@ def main():
     cv2.imwrite(str(output_path), out)
     print(f"Saved {output_path}")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,16 +1,16 @@
 """Test limb.utils.plot.edge_plot on the first sim image using sim_metadata.csv row 0."""
+
 import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 
 from limb.simulation.edge.conic import (
     _shape_matrix_from_axes,
-    generate_camera_conic,
     generate_edge_points,
-    generate_pixel_conic,
 )
 from limb.utils._camera import Camera
 from limb.utils.plot import edge_plot
+
 
 def main():
     df = pd.read_csv("sim_metadata.csv", index_col=0)
@@ -31,11 +31,11 @@ def main():
     quat = np.array([row["qx"], row["qy"], row["qz"], row["qw"]], dtype=np.float64)
     tcp = R.from_quat(quat).as_matrix()
     tpc = tcp.T  # world to camera
-    sat_pos = np.array([row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]], dtype=np.float64)
+    sat_pos = np.array(
+        [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]], dtype=np.float64
+    )
     rc = tpc @ sat_pos
 
-    image_conic = generate_camera_conic(rc, shape_matrix, tpc)
-    pixel_conic = generate_pixel_conic(image_conic, camera)
     points = generate_edge_points(rc, shape_matrix, tpc, camera)
 
     if points.size == 0:
@@ -56,6 +56,7 @@ def main():
         true_points=points,
         save_path="limb_plot.png",
     )
+
 
 if __name__ == "__main__":
     main()

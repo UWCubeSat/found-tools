@@ -21,9 +21,11 @@ import numpy as np
 
 from limb.utils._camera import Camera
 
+
 def _shape_matrix_from_axes(semi_axes: list[float]) -> np.ndarray:
     a, b, c = semi_axes
     return np.diag([1.0 / (a * a), 1.0 / (b * b), 1.0 / (c * c)])
+
 
 def generate_camera_conic(
     rc: np.ndarray,
@@ -142,35 +144,60 @@ def solve_general_conic(
     return ((-Q + sqrt_d) / (2 * P), (-Q - sqrt_d) / (2 * P))
 
 
-def sample_conic_at_all_rows_columns(conic: np.ndarray, camera: Camera) -> np.ndarray:
-    """Solve conic at every row and column (step 1); return in-image points.
+def _point_on_visible_arc(
+    x: float, y: float, rc: np.ndarray, k_inv: np.ndarray
+) -> bool:
+    """True if the ray through pixel (x, y) points away from Earth (sky side of limb).
+
+    Matches render logic: keep points where dot(ray, rc) <= 0.
+    """
+    ray = k_inv @ np.array([x, y, 1.0], dtype=np.float64)
+    return float(np.dot(ray, rc)) <= 0.0
+
+
+def sample_conic_at_all_rows_columns(
+    conic: np.ndarray, camera: Camera, rc: np.ndarray
+) -> np.ndarray:
+    """Solve conic at every row and column (step 1); return in-image points on the visible arc.
 
     Steps x from 0 to x_resolution - 1 and, for each x, solves for y.
     Steps y from 0 to y_resolution - 1 and, for each y, solves for x.
     Only points with 0 ≤ x < x_resolution and 0 ≤ y < y_resolution are returned.
+    Points are filtered to the visible horizon arc (sky side): same as render, only
+    points where the pixel ray dot rc <= 0 are kept.
 
     Args:
         conic: 3×3 symmetric conic matrix in pixel coordinates.
-        camera: Camera supplying x_resolution and y_resolution.
+        camera: Camera supplying x_resolution, y_resolution, and inverse calibration.
+        rc: Camera position in camera frame (vector to Earth), shape (3,).
 
     Returns:
         points: (N, 2) array of (x, y) pixel coordinates on the conic inside the image.
     """
     a, b, c, d, e, f = _conic_matrix_to_coeffs(conic)
+    k_inv = camera.inverse_calibration_matrix
     points: list[list[float]] = []
     for x in range(camera.x_resolution):
-        sols = solve_general_conic(a, b, c, d, e, f, float(x + .5), "solve_y")
+        sols = solve_general_conic(a, b, c, d, e, f, float(x + 0.5), "solve_y")
         if sols is not None:
             for y in sols:
-                if 0 <= y < camera.y_resolution:
+                if 0 <= y < camera.y_resolution and _point_on_visible_arc(
+                    float(x), float(y), rc, k_inv
+                ):
                     points.append([float(x), float(y)])
     for y in range(camera.y_resolution):
-        sols = solve_general_conic(a, b, c, d, e, f, float(y +.5), "solve_x")
+        sols = solve_general_conic(a, b, c, d, e, f, float(y + 0.5), "solve_x")
         if sols is not None:
             for x in sols:
-                if 0 <= x < camera.x_resolution:
+                if 0 <= x < camera.x_resolution and _point_on_visible_arc(
+                    float(x), float(y), rc, k_inv
+                ):
                     points.append([float(x), float(y)])
-    return np.array(points, dtype=np.float64) if points else np.empty((0, 2), dtype=np.float64)
+    return (
+        np.array(points, dtype=np.float64)
+        if points
+        else np.empty((0, 2), dtype=np.float64)
+    )
 
 
 def sort_points_polar_order(points: np.ndarray) -> np.ndarray:
@@ -197,6 +224,10 @@ def generate_edge_points(
     shape_matrix: np.ndarray,
     orientation: np.ndarray,
     cam: Camera,
+    *,
+    gaussian_sigma: Optional[float | tuple[float, float]] = None,
+    n_false_points: int = 0,
+    rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
     """Generate points on the projected horizon ellipse in pixel coordinates.
 
@@ -204,6 +235,9 @@ def generate_edge_points(
     coordinates, then solves at every row and column (step 1) using the
     general conic algorithm. Only points inside the image
     (0 ≤ x < x_resolution, 0 ≤ y < y_resolution) are returned.
+
+    Optionally applies point noise and/or adds false points; both can be
+    used at the same time (noisy edge points first, then false points).
 
     Args:
         pos:         Satellite position in camera coordinates, shape (3,).
@@ -213,15 +247,30 @@ def generate_edge_points(
         orientation: Rotation matrix from world to camera coordinates
                      (TPC), shape (3, 3).
         cam:         Camera object supplying intrinsics and resolution.
+        gaussian_sigma: If set, add zero-mean Gaussian noise to each edge
+            point. Use a float for same sigma in x and y, or (sigma_x, sigma_y).
+        n_false_points: Number of extra points to add uniformly at random
+            inside the image.
+        rng: Random generator for reproducibility. If None, uses default.
 
     Returns:
         points: NumPy array of (x, y) pixel coordinates on the conic that
-            lie within the image, shape (M, 2).
+            lie within the image, shape (M, 2). If noise/false points are
+            used, order is perturbed edge points (in bounds) then false points.
     """
     cam_conic = generate_camera_conic(pos, shape_matrix, orientation)
     pixel_conic = generate_pixel_conic(cam_conic, cam)
-    points = sample_conic_at_all_rows_columns(pixel_conic, cam)
-    return sort_points_polar_order(points)
+    points = sample_conic_at_all_rows_columns(pixel_conic, cam, pos)
+    points = sort_points_polar_order(points)
+    if gaussian_sigma is not None or n_false_points > 0:
+        points = add_point_noise(
+            points,
+            cam,
+            gaussian_sigma=gaussian_sigma,
+            n_false_points=n_false_points,
+            rng=rng,
+        )
+    return points
 
 
 def add_point_noise(
@@ -234,6 +283,8 @@ def add_point_noise(
 ) -> np.ndarray:
     """Add Gaussian noise in x/y and/or random false points; return only in-image points.
 
+    You can use gaussian_sigma and n_false_points at the same time: noisy edge
+    points (that stay in bounds) are returned first, then false points.
     Each input point can be perturbed by independent Gaussian noise. Optionally,
     additional points are drawn uniformly at random in the image. Any point
     (original+noise or false) that falls outside the image is dropped.
@@ -269,7 +320,12 @@ def add_point_noise(
                 sx, sy = float(gaussian_sigma[0]), float(gaussian_sigma[1])
             noise = rng.normal(0, (sx, sy), size=pts.shape)
             pts = pts + noise
-        in_bounds = (pts[:, 0] >= 0) & (pts[:, 0] < width) & (pts[:, 1] >= 0) & (pts[:, 1] < height)
+        in_bounds = (
+            (pts[:, 0] >= 0)
+            & (pts[:, 0] < width)
+            & (pts[:, 1] >= 0)
+            & (pts[:, 1] < height)
+        )
         kept = pts[in_bounds]
         if kept.size > 0:
             out_list.append(kept)

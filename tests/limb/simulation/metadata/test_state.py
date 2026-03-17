@@ -1,85 +1,91 @@
-# import unittest
+"""Tests for limb.simulation.metadata.state."""
 
-# import numpy as np
+import unittest
 
-# from limb.simulation.metadata.state import generate_satellite_state
-# from limb.utils._camera import Camera
+import numpy as np
 
-
-# class StateTest(unittest.TestCase):
-#     def test_generate_satellite_state_with_zero_edge_angle(self):
-#         shape_matrix = np.diag([1.0 / 100.0, 1.0 / 100.0, 1.0 / 100.0])
-#         earth_direction = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-#         distance = 15.0
-
-#         camera = Camera(
-#             focalLength=0.035,
-#             xPixelPitch=5e-6,
-#             xResolution=1280,
-#             yResolution=1024,
-#             edgeAngleMode="zero",
-#         )
-
-#         num_positions = 4
-#         num_orientations = 3
-#         positions, orientations = generate_satellite_state(
-#             shape_matrix,
-#             earth_direction,
-#             distance,
-#             camera,
-#             num_positions,
-#             num_orientations,
-#         )
-
-#         self.assertEqual((num_positions, 3), positions.shape)
-#         self.assertEqual((num_orientations, num_positions, 3, 3), orientations.shape)
-#         self.assertTrue(np.isfinite(positions).all())
-#         self.assertTrue(np.isfinite(orientations).all())
-
-#         # Each orientation should be a valid rotation matrix.
-#         for r in orientations.reshape(-1, 3, 3):
-#             self.assertTrue(np.allclose(r @ r.T, np.eye(3), atol=1e-6))
-
-#     def test_generate_satellite_state_with_wgs84_earth_geometry(self):
-#         # WGS84 ellipsoid semi-axes
-#         a, b, c = 6378137.0, 6378137.0, 6356752.31424518
-#         shape_matrix = np.diag([1.0 / (a * a), 1.0 / (b * b), 1.0 / (c * c)])
-#         earth_direction = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-#         distance = 6800000.0
-
-#         camera = Camera(
-#             focalLength=0.035,
-#             xPixelPitch=5e-6,
-#             xResolution=1280,
-#             yResolution=1024,
-#             edgeOffset=80,
-#             edgeAngleMode="zero",
-#         )
-
-#         num_positions = 4
-#         num_orientations = 2
-#         positions, orientations = generate_satellite_state(
-#             shape_matrix,
-#             earth_direction,
-#             distance,
-#             camera,
-#             num_positions,
-#             num_orientations,
-#         )
-
-#         self.assertEqual((num_positions, 3), positions.shape)
-#         self.assertEqual((num_orientations, num_positions, 3, 3), orientations.shape)
-#         self.assertTrue(np.isfinite(positions).all())
-#         self.assertTrue(np.isfinite(orientations).all())
-
-#         # Each orientation should be a valid rotation matrix.
-#         for r in orientations.reshape(-1, 3, 3):
-#             self.assertTrue(np.allclose(r @ r.T, np.eye(3), atol=1e-6))
-
-#         # All satellite positions should be at approximately the same distance from origin.
-#         distances = np.linalg.norm(positions, axis=1)
-#         self.assertTrue(np.allclose(distances, distance, rtol=1e-6))
+from limb.simulation.metadata.state import (
+    generate_uniform_directions,
+    generate_satellite_state,
+)
+from limb.utils._camera import Camera
 
 
-# if __name__ == "__main__":
-#     unittest.main()
+class TestGenerateUniformDirections(unittest.TestCase):
+    def test_zero_returns_empty(self):
+        out = generate_uniform_directions(0)
+        self.assertEqual(out.shape, (0, 3))
+
+    def test_one_returns_one_unit_vector(self):
+        out = generate_uniform_directions(1)
+        self.assertEqual(out.shape, (1, 3))
+        np.testing.assert_allclose(np.linalg.norm(out[0]), 1.0)
+
+    def test_multiple_returns_unit_vectors(self):
+        out = generate_uniform_directions(10)
+        self.assertEqual(out.shape, (10, 3))
+        norms = np.linalg.norm(out, axis=1)
+        np.testing.assert_allclose(norms, 1.0)
+
+
+class TestGenerateSatelliteState(unittest.TestCase):
+    def test_returns_positions_and_orientations(self):
+        shape_matrix = np.diag(
+            [1.0 / 6378137.0**2, 1.0 / 6378137.0**2, 1.0 / 6356752.0**2]
+        )
+        earth_directions = np.array([[1.0, 0.0, 0.0]])
+        distance = 6800000.0
+        camera = Camera(
+            focal_length=0.035,
+            x_pixel_pitch=5e-6,
+            x_resolution=64,
+            y_resolution=64,
+        )
+        num_positions = 2
+        num_spins = 2
+        num_radials = 2
+        positions, orientations = generate_satellite_state(
+            shape_matrix,
+            earth_directions,
+            distance,
+            camera,
+            num_positions,
+            num_spins,
+            num_radials,
+        )
+        n_orient = num_positions * num_spins * num_radials
+        self.assertEqual(positions.shape[0], n_orient)
+        self.assertEqual(positions.shape[1], 3)
+        self.assertEqual(orientations.shape[0], n_orient)
+        self.assertEqual(orientations.shape[1], 3)
+        self.assertEqual(orientations.shape[2], 3)
+        self.assertTrue(np.isfinite(positions).all())
+        self.assertTrue(np.isfinite(orientations).all())
+        for r in orientations:
+            np.testing.assert_allclose(r @ r.T, np.eye(3), atol=1e-5)
+
+    def test_multiple_earth_directions(self):
+        shape_matrix = np.diag([1.0 / 100.0**2, 1.0 / 100.0**2, 1.0 / 100.0**2])
+        earth_directions = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        distance = 200.0
+        camera = Camera(
+            focal_length=0.035,
+            x_pixel_pitch=5e-6,
+            x_resolution=64,
+            y_resolution=64,
+        )
+        positions, orientations = generate_satellite_state(
+            shape_matrix,
+            earth_directions,
+            distance,
+            camera,
+            numSatellitePositions=2,
+            numImageSpins=1,
+            numImageRadials=1,
+        )
+        self.assertGreater(positions.shape[0], 0)
+        self.assertEqual(orientations.shape[0], positions.shape[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -13,8 +13,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
 
-from limb.simulation.edge.conic import _conic_matrix_to_coeffs, solve_general_conic
-
 
 def edge_plot(
     image_path: str,
@@ -58,7 +56,13 @@ def edge_plot(
         raise ValueError("Window is empty (fully outside image).")
 
     fig, ax = plt.subplots()
-    ax.imshow(crop, extent=[x0, x1, y1, y0], aspect="equal", interpolation="nearest", cmap="gray")
+    ax.imshow(
+        crop,
+        extent=[x0, x1, y1, y0],
+        aspect="equal",
+        interpolation="nearest",
+        cmap="gray",
+    )
     ax.set_xlim(x0, x1)
     ax.set_ylim(y1, y0)
 
@@ -130,7 +134,13 @@ def plot_radius_residuals_vs_range(
         )
     range_array = np.linspace(ranges_m.min(), ranges_m.max(), 100)
     sigma = radius_1sigma_px
-    ax.plot(range_array, 3 * sigma * np.ones_like(range_array), "k--", linewidth=2, label="3σ bounds")
+    ax.plot(
+        range_array,
+        3 * sigma * np.ones_like(range_array),
+        "k--",
+        linewidth=2,
+        label="3σ bounds",
+    )
     ax.plot(range_array, -3 * sigma * np.ones_like(range_array), "k--", linewidth=2)
     ax.fill_between(range_array, -3 * sigma, 3 * sigma, alpha=0.1, color="gray")
     ax.axhline(0, color="k", linestyle="-", linewidth=0.5, alpha=0.5)
@@ -197,10 +207,11 @@ def plot_centroid_residuals_in_illumination_frame(
     ax1.set_ylabel("X Centroid Residual (pixels)\n(along sun direction)", fontsize=11)
     ax2.set_ylabel("Y Centroid Residual (pixels)\n(perpendicular to sun)", fontsize=11)
     ax2.set_xlabel("True Range (m)", fontsize=12)
-    ax1.set_title(f"{target_label} Centroid Residuals in Illumination Frame", fontsize=14)
+    ax1.set_title(
+        f"{target_label} Centroid Residuals in Illumination Frame", fontsize=14
+    )
     ax1.legend(loc="best", framealpha=0.9)
     plt.tight_layout()
     if save_path is not None:
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
     return fig, (ax1, ax2)
-

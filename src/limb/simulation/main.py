@@ -1,7 +1,6 @@
 import argparse
 from pathlib import Path
 import numpy as np
-import pandas as pd
 
 from limb.simulation.metadata.orchestrate import (
     _calculate_conic_coeffs,
@@ -179,7 +178,9 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--noise-stars must be in [0, 1].")
     if args.noise_discretization is not None and args.noise_discretization < 1:
         raise ValueError("--noise-discretization must be >= 1.")
-    if args.noise_motion_blur is not None and (args.noise_motion_blur < 1 or args.noise_motion_blur % 2 == 0):
+    if args.noise_motion_blur is not None and (
+        args.noise_motion_blur < 1 or args.noise_motion_blur % 2 == 0
+    ):
         raise ValueError("--noise-motion-blur must be odd and >= 1.")
 
 
@@ -214,7 +215,10 @@ def main() -> None:  # pragma: no cover
     ):
         noise_config = {}
         if args.noise_gaussian is not None:
-            noise_config["gaussian"] = {"mean": args.noise_gaussian[0], "sigma": args.noise_gaussian[1]}
+            noise_config["gaussian"] = {
+                "mean": args.noise_gaussian[0],
+                "sigma": args.noise_gaussian[1],
+            }
         if args.noise_stars is not None:
             noise_config["stars"] = {"prob": args.noise_stars}
         if args.noise_dead_pixels is not None:
@@ -229,7 +233,12 @@ def main() -> None:  # pragma: no cover
 
     coeffs_and_centroid_by_resolution = _calculate_conic_coeffs(args.output_csv)
     args.output_folder.mkdir(parents=True, exist_ok=True)
-    for (width, height), (row_indices, coeffs, K, rc) in coeffs_and_centroid_by_resolution.items():
+    for (width, height), (
+        row_indices,
+        coeffs,
+        K,
+        rc,
+    ) in coeffs_and_centroid_by_resolution.items():
         render_conic.process_simulation(
             coeffs_nx6=render_conic.torch.from_numpy(coeffs),
             width=width,
