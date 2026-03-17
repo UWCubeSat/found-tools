@@ -227,6 +227,7 @@ def generate_edge_points(
     *,
     gaussian_sigma: Optional[float | tuple[float, float]] = None,
     n_false_points: int = 0,
+    truncate: int = 1,
     rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
     """Generate points on the projected horizon ellipse in pixel coordinates.
@@ -251,6 +252,8 @@ def generate_edge_points(
             point. Use a float for same sigma in x and y, or (sigma_x, sigma_y).
         n_false_points: Number of extra points to add uniformly at random
             inside the image.
+        truncate: When using gaussian_sigma, clip noise to ±truncate * sigma
+            per axis (e.g. 3 for ±3 sigma). Ignored if gaussian_sigma is None.
         rng: Random generator for reproducibility. If None, uses default.
 
     Returns:
@@ -268,6 +271,7 @@ def generate_edge_points(
             cam,
             gaussian_sigma=gaussian_sigma,
             n_false_points=n_false_points,
+            truncate=truncate,
             rng=rng,
         )
     return points
@@ -279,6 +283,7 @@ def add_point_noise(
     *,
     gaussian_sigma: Optional[float | tuple[float, float]] = None,
     n_false_points: int = 0,
+    truncate: int = 1,
     rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
     """Add Gaussian noise in x/y and/or random false points; return only in-image points.
@@ -296,6 +301,8 @@ def add_point_noise(
             Use a float for the same sigma in x and y, or (sigma_x, sigma_y).
         n_false_points: Number of extra points to add uniformly at random
             inside the image.
+        truncate: When using gaussian_sigma, clip noise to ±truncate * sigma
+            per axis (e.g. 3 for ±3 sigma). Ignored if gaussian_sigma is None.
         rng: Random generator for reproducibility. If None, uses default generator.
 
     Returns:
@@ -319,6 +326,8 @@ def add_point_noise(
             else:
                 sx, sy = float(gaussian_sigma[0]), float(gaussian_sigma[1])
             noise = rng.normal(0, (sx, sy), size=pts.shape)
+            noise[:, 0] = np.clip(noise[:, 0], -truncate * sx, truncate * sx)
+            noise[:, 1] = np.clip(noise[:, 1], -truncate * sy, truncate * sy)
             pts = pts + noise
         in_bounds = (
             (pts[:, 0] >= 0)

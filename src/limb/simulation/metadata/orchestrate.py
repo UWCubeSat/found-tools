@@ -28,7 +28,6 @@ def initialize_sim_df() -> pd.DataFrame:
         true_pos_x/y/z          Satellite position in world frame (rectangular, m).
         qx, qy, qz, qw             Optical-axis attitude as quaternion (scipy order: x, y, z, w).
         shape_axis_a/b/c         Ellipsoid semi-axes (m); diagonal entries of shape matrix.
-        atmosphere_blur          Gaussian blur sigma applied to the limb edge (pixels).
 
     Camera parameters (one scalar column rper intrinsic):
         cam_focal_length         Focal length (m).
@@ -75,8 +74,6 @@ def initialize_sim_df() -> pd.DataFrame:
         "shape_axis_a": pd.Series(dtype="float64"),
         "shape_axis_b": pd.Series(dtype="float64"),
         "shape_axis_c": pd.Series(dtype="float64"),
-        # --- atmosphere ---
-        "atmosphere_blur": pd.Series(dtype="float64"),
         # --- camera intrinsics ---
         "cam_focal_length": pd.Series(dtype="float64"),
         "cam_x_pixel_pitch": pd.Series(dtype="float64"),
@@ -147,31 +144,22 @@ def _fill_setup(
     return pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
 
-def _conic_from_row(row: pd.Series) -> np.ndarray:
-    """Compute conic coefficients (a,b,c,d,e,f) from a single simulation metadata row.
+def _row_to_pose(row: pd.Series) -> tuple[Camera, np.ndarray, np.ndarray, np.ndarray]:
+    """Parse a simulation metadata row into camera, shape matrix, TPC, and position in camera frame.
 
     Row must contain: shape_axis_a/b/c, cam_*, qx,qy,qz,qw, true_pos_x/y/z.
-    Returns shape (6,) float64.
+
+    Returns
+    -------
+    camera : Camera
+        Camera built from row intrinsics.
+    shape_matrix : np.ndarray
+        (3, 3) ellipsoid shape matrix.
+    tpc : np.ndarray
+        (3, 3) rotation from world to camera frame.
+    rc : np.ndarray
+        (3,) satellite position in camera coordinates.
     """
-    semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
-    shape_matrix = _shape_matrix_from_axes(semi_axes)
-    camera = Camera.from_row(row)
-    quat = np.array(
-        [row["qx"], row["qy"], row["qz"], row["qw"]],
-        dtype=np.float64,
-    )
-    tcp = R.from_quat(quat).as_matrix()
-    tpc = tcp.T
-    sat_pos = np.array(
-        [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]],
-        dtype=np.float64,
-    )
-    rc = tpc @ sat_pos
-    image_conic = generate_camera_conic(rc, shape_matrix, tpc)
-    return generate_pixel_conic(image_conic, camera)
-
-
-def points_from_row(row: pd.Series) -> np.ndarray:
     camera = Camera.from_row(row)
     semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
     shape_matrix = _shape_matrix_from_axes(semi_axes)
@@ -185,7 +173,47 @@ def points_from_row(row: pd.Series) -> np.ndarray:
         dtype=np.float64,
     )
     rc = tpc @ sat_pos
-    return generate_edge_points(rc, shape_matrix, tpc, camera)
+    return camera, shape_matrix, tpc, rc
+
+
+def _conic_from_row(row: pd.Series) -> np.ndarray:
+    """Compute conic coefficients (a,b,c,d,e,f) from a single simulation metadata row.
+
+    Row must contain: shape_axis_a/b/c, cam_*, qx,qy,qz,qw, true_pos_x/y/z.
+    Returns shape (6,) float64.
+    """
+    camera, shape_matrix, tpc, rc = _row_to_pose(row)
+    image_conic = generate_camera_conic(rc, shape_matrix, tpc)
+    return generate_pixel_conic(image_conic, camera)
+
+
+def points_from_row(
+    row: pd.Series,
+    *,
+    gaussian_sigma: float | tuple[float, float] | None = None,
+    n_false_points: int = 0,
+    truncate: int = 1,
+) -> np.ndarray:
+    """Compute edge points in pixel coordinates from a simulation metadata row.
+
+    Args:
+        row: One row from the simulation DataFrame (shape, pose, camera, etc.).
+        gaussian_sigma: Optional point noise sigma in pixels. Float for isotropic,
+            or (sigma_x, sigma_y). Passed to generate_edge_points.
+
+    Returns:
+        (N, 2) array of (x, y) pixel coordinates on the limb edge.
+    """
+    camera, shape_matrix, tpc, rc = _row_to_pose(row)
+    return generate_edge_points(
+        rc,
+        shape_matrix,
+        tpc,
+        camera,
+        gaussian_sigma=gaussian_sigma,
+        n_false_points=n_false_points,
+        truncate=truncate,
+    )
 
 
 def _calculate_conic_coeffs(
@@ -215,19 +243,9 @@ def _calculate_conic_coeffs(
     ] = {}
 
     for idx, row in df.iterrows():
-        camera = Camera.from_row(row)
+        camera, _, _, rc = _row_to_pose(row)
         conic = _conic_from_row(row)
         coeffs = _conic_matrix_to_coeffs(conic)
-        quat = np.array(
-            [row["qx"], row["qy"], row["qz"], row["qw"]],
-            dtype=np.float64,
-        )
-        tpc = R.from_quat(quat).as_matrix().T
-        sat_pos = np.array(
-            [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]],
-            dtype=np.float64,
-        )
-        rc = tpc @ sat_pos
 
         key = (camera.x_resolution, camera.y_resolution)
         if key not in out:
