@@ -104,6 +104,35 @@ class TestPointsFromRow(unittest.TestCase):
         if points.size > 0:
             self.assertEqual(points.shape[1], 2)
 
+    def test_points_from_row_truncate(self):
+        """Truncate controls decimal places of returned point coordinates."""
+        df = initialize_sim_df()
+        camera = Camera(
+            focal_length=0.035,
+            x_pixel_pitch=5e-6,
+            x_resolution=64,
+            y_resolution=64,
+        )
+        row = _fill_setup(
+            df,
+            camera,
+            np.array([6800000.0, 0.0, 0.0]),
+            np.array([6378137.0, 6378137.0, 6356752.0]),
+            np.array([0.0, 0.0, 0.0, 1.0]),
+        ).iloc[0]
+        points_0 = points_from_row(row, truncate=0)
+        if points_0.size > 0:
+            self.assertTrue(
+                np.all(points_0 == np.round(points_0)),
+                msg="truncate=0 should yield integer pixel coordinates",
+            )
+        points_2 = points_from_row(row, truncate=2)
+        if points_2.size > 0:
+            self.assertTrue(
+                np.allclose(points_2, np.round(points_2, 2)),
+                msg="truncate=2 should yield coordinates with at most 2 decimal places",
+            )
+
 
 class TestCalculateConicCoeffs(unittest.TestCase):
     def test_from_dataframe(self):

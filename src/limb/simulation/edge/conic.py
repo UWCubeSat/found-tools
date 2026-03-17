@@ -160,8 +160,8 @@ def sample_conic_at_all_rows_columns(
 ) -> np.ndarray:
     """Solve conic at every row and column (step 1); return in-image points on the visible arc.
 
-    Steps x from 0 to x_resolution - 1 and, for each x, solves for y.
-    Steps y from 0 to y_resolution - 1 and, for each y, solves for x.
+    Steps x from 0.5 to x_resolution - 0.5 and y from 0.5 to y_resolution - 0.5 (pixel
+    centers), step 1. For each x, solves for y; for each y, solves for x.
     Only points with 0 ≤ x < x_resolution and 0 ≤ y < y_resolution are returned.
     Points are filtered to the visible horizon arc (sky side): same as render, only
     points where the pixel ray dot rc <= 0 are kept.
@@ -177,16 +177,16 @@ def sample_conic_at_all_rows_columns(
     a, b, c, d, e, f = _conic_matrix_to_coeffs(conic)
     k_inv = camera.inverse_calibration_matrix
     points: list[list[float]] = []
-    for x in range(camera.x_resolution):
-        sols = solve_general_conic(a, b, c, d, e, f, float(x + 0.5), "solve_y")
+    for x in np.arange(0.5, camera.x_resolution, 1.0):
+        sols = solve_general_conic(a, b, c, d, e, f, float(x), "solve_y")
         if sols is not None:
             for y in sols:
                 if 0 <= y < camera.y_resolution and _point_on_visible_arc(
                     float(x), float(y), rc, k_inv
                 ):
                     points.append([float(x), float(y)])
-    for y in range(camera.y_resolution):
-        sols = solve_general_conic(a, b, c, d, e, f, float(y + 0.5), "solve_x")
+    for y in np.arange(0.5, camera.y_resolution, 1.0):
+        sols = solve_general_conic(a, b, c, d, e, f, float(y), "solve_x")
         if sols is not None:
             for x in sols:
                 if 0 <= x < camera.x_resolution and _point_on_visible_arc(
@@ -227,7 +227,7 @@ def generate_edge_points(
     *,
     gaussian_sigma: Optional[float | tuple[float, float]] = None,
     n_false_points: int = 0,
-    truncate: int = 1,
+    truncate: int = 0,
     rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
     """Generate points on the projected horizon ellipse in pixel coordinates.
@@ -252,8 +252,8 @@ def generate_edge_points(
             point. Use a float for same sigma in x and y, or (sigma_x, sigma_y).
         n_false_points: Number of extra points to add uniformly at random
             inside the image.
-        truncate: When using gaussian_sigma, clip noise to ±truncate * sigma
-            per axis (e.g. 3 for ±3 sigma). Ignored if gaussian_sigma is None.
+        truncate: Number of decimal places for point coordinates (e.g. 0 for
+            integer pixels, 2 for two decimals). Applied to all returned points.
         rng: Random generator for reproducibility. If None, uses default.
 
     Returns:
@@ -274,6 +274,8 @@ def generate_edge_points(
             truncate=truncate,
             rng=rng,
         )
+    else:
+        points = np.round(points, decimals=truncate)
     return points
 
 
@@ -283,7 +285,7 @@ def add_point_noise(
     *,
     gaussian_sigma: Optional[float | tuple[float, float]] = None,
     n_false_points: int = 0,
-    truncate: int = 1,
+    truncate: int = 0,
     rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
     """Add Gaussian noise in x/y and/or random false points; return only in-image points.
@@ -301,8 +303,8 @@ def add_point_noise(
             Use a float for the same sigma in x and y, or (sigma_x, sigma_y).
         n_false_points: Number of extra points to add uniformly at random
             inside the image.
-        truncate: When using gaussian_sigma, clip noise to ±truncate * sigma
-            per axis (e.g. 3 for ±3 sigma). Ignored if gaussian_sigma is None.
+        truncate: Number of decimal places for point coordinates (e.g. 0 for
+            integer pixels, 2 for two decimals). Applied to all returned points.
         rng: Random generator for reproducibility. If None, uses default generator.
 
     Returns:
@@ -326,8 +328,6 @@ def add_point_noise(
             else:
                 sx, sy = float(gaussian_sigma[0]), float(gaussian_sigma[1])
             noise = rng.normal(0, (sx, sy), size=pts.shape)
-            noise[:, 0] = np.clip(noise[:, 0], -truncate * sx, truncate * sx)
-            noise[:, 1] = np.clip(noise[:, 1], -truncate * sy, truncate * sy)
             pts = pts + noise
         in_bounds = (
             (pts[:, 0] >= 0)
@@ -335,14 +335,16 @@ def add_point_noise(
             & (pts[:, 1] >= 0)
             & (pts[:, 1] < height)
         )
-        kept = pts[in_bounds]
+        kept = np.round(pts[in_bounds], decimals=truncate)
         if kept.size > 0:
             out_list.append(kept)
 
     if n_false_points > 0:
         x_false = rng.uniform(0, width, size=n_false_points)
         y_false = rng.uniform(0, height, size=n_false_points)
-        out_list.append(np.column_stack([x_false, y_false]))
+        out_list.append(
+            np.round(np.column_stack([x_false, y_false]), decimals=truncate)
+        )
 
     if not out_list:
         return np.empty((0, 2), dtype=np.float64)
