@@ -5,12 +5,31 @@ helpers for building camera rotation and intrinsics matrices. Not usning FOUND c
 to avoid nonlinear dependencies.
 """
 
-import numpy as np
 import random
+
+import numpy as np
+import pandas as pd
 
 
 class Camera:
     """Simple pinhole camera model with public camera parameters."""
+
+    @classmethod
+    def from_row(cls, row: pd.Series) -> "Camera":
+        """Build a Camera from a single row of the simulation/orchestrate DataFrame.
+
+        Row must contain: cam_focal_length, cam_x_pixel_pitch, cam_y_pixel_pitch,
+        cam_x_resolution, cam_y_resolution, cam_x_center, cam_y_center.
+        """
+        return cls(
+            focal_length=float(row["cam_focal_length"]),
+            x_pixel_pitch=float(row["cam_x_pixel_pitch"]),
+            y_pixel_pitch=float(row["cam_y_pixel_pitch"]),
+            x_resolution=int(row["cam_x_resolution"]),
+            y_resolution=int(row["cam_y_resolution"]),
+            x_center=float(row["cam_x_center"]),
+            y_center=float(row["cam_y_center"]),
+        )
 
     def __init__(
         self,

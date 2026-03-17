@@ -1,6 +1,13 @@
-"""Plot a window of the image around a point with edge points and optional conic."""
+"""Plot a window of the image around a point with edge points and optional conic.
+
+Also provides OpNav validation plots: radius residuals vs range and centroid
+residuals in the illumination frame.
+"""
 
 from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -92,4 +99,108 @@ def edge_plot(
     if save_path is not None:
         fig.savefig(save_path)
     plt.show()
+
+
+def plot_radius_residuals_vs_range(
+    ranges_m: np.ndarray,
+    radius_residuals_px: np.ndarray,
+    pass_ids: list[str],
+    radius_1sigma_px: float,
+    target_label: str = "Moon",
+    save_path: Optional[Path | str] = None,
+):
+    """Plot radius residuals (pixels) vs true range (m) for all passes with 3σ bounds.
+
+    X-axis: true range (meters). Y-axis: radius residual (pixels). Multiple passes
+    are plotted with distinct colors; 3σ error bounds are drawn from the given
+    sigma.
+    """
+    unique_passes = sorted(set(pass_ids))
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_passes)))
+    for i, pass_id in enumerate(unique_passes):
+        mask = np.array([pid == pass_id for pid in pass_ids])
+        ax.scatter(
+            ranges_m[mask],
+            radius_residuals_px[mask],
+            c=[colors[i]],
+            label=pass_id,
+            alpha=0.6,
+            s=40,
+        )
+    range_array = np.linspace(ranges_m.min(), ranges_m.max(), 100)
+    sigma = radius_1sigma_px
+    ax.plot(range_array, 3 * sigma * np.ones_like(range_array), "k--", linewidth=2, label="3σ bounds")
+    ax.plot(range_array, -3 * sigma * np.ones_like(range_array), "k--", linewidth=2)
+    ax.fill_between(range_array, -3 * sigma, 3 * sigma, alpha=0.1, color="gray")
+    ax.axhline(0, color="k", linestyle="-", linewidth=0.5, alpha=0.5)
+    ax.set_xlabel("True Range (m)", fontsize=12)
+    ax.set_ylabel("Radius Residual (pixels)", fontsize=12)
+    ax.set_title(f"{target_label} Radius Residuals for All Passes", fontsize=14)
+    ax.legend(loc="best", framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    return fig, ax
+
+
+def plot_centroid_residuals_in_illumination_frame(
+    ranges_m: np.ndarray,
+    centroid_x_px: np.ndarray,
+    centroid_y_px: np.ndarray,
+    pass_ids: list[str],
+    centroid_1sigma_px: float,
+    target_label: str = "Moon",
+    save_path: Optional[Path | str] = None,
+):
+    """Plot X and Y centroid residuals (illumination frame) vs true range (m).
+
+    Two subplots: X along sun direction, Y perpendicular to sun. 3σ bounds are
+    drawn from the given sigma.
+    """
+    unique_passes = sorted(set(pass_ids))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_passes)))
+    for i, pass_id in enumerate(unique_passes):
+        mask = np.array([pid == pass_id for pid in pass_ids])
+        ax1.scatter(
+            ranges_m[mask],
+            centroid_x_px[mask],
+            c=[colors[i]],
+            label=pass_id,
+            alpha=0.6,
+            s=40,
+        )
+    for i, pass_id in enumerate(unique_passes):
+        mask = np.array([pid == pass_id for pid in pass_ids])
+        ax2.scatter(
+            ranges_m[mask],
+            centroid_y_px[mask],
+            c=[colors[i]],
+            alpha=0.6,
+            s=40,
+        )
+    sigma = centroid_1sigma_px
+    for ax in (ax1, ax2):
+        ax.axhline(3 * sigma, color="k", linestyle="--", linewidth=2)
+        ax.axhline(-3 * sigma, color="k", linestyle="--", linewidth=2)
+        ax.fill_between(
+            [ranges_m.min(), ranges_m.max()],
+            -3 * sigma,
+            3 * sigma,
+            alpha=0.1,
+            color="gray",
+        )
+        ax.axhline(0, color="k", linestyle="-", linewidth=0.5, alpha=0.5)
+        ax.grid(True, alpha=0.3)
+    ax1.set_ylabel("X Centroid Residual (pixels)\n(along sun direction)", fontsize=11)
+    ax2.set_ylabel("Y Centroid Residual (pixels)\n(perpendicular to sun)", fontsize=11)
+    ax2.set_xlabel("True Range (m)", fontsize=12)
+    ax1.set_title(f"{target_label} Centroid Residuals in Illumination Frame", fontsize=14)
+    ax1.legend(loc="best", framealpha=0.9)
+    plt.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    return fig, (ax1, ax2)
 

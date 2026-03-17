@@ -16,16 +16,20 @@ All list options use **space-separated** values (e.g. `--fovs 80 70`, not `80, 7
 ## Example (copyable)
 
 ```bash
-limb_simulation \
-  --fovs 80 70 \
-  --resolutions 1024 2048 \
-  --distances 7000000 8000000 9000000 \
+uv run limb_simulation \
+  --fovs 70 \
+  --resolutions 1024 \
+  --distances 6800000 \
   --num-positions-per-point 2 \
   --num-spins-per-position 2 \
-  --num-radials-per-spin 2 \
-  --output-csv sim_metadata.csv \
+  --num-radials-per-spin 4 \
+  --noise-gaussian 0 10 \
+  --noise-stars 0.005 \
+  --noise-discretization 8 \
+  --noise-motion-blur 5 \
+  --noise-dead-pixels 0.01 0.01 \
   --output-folder sim_images \
-  --batch-size 100
+  --seed 42
 ```
 
 Omit `--output-csv` and `--output-folder` to write to `sim_metadata.csv` and `sim_images/` in the current directory.

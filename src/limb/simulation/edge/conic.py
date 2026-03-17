@@ -6,15 +6,16 @@ conic in pixel coordinates, given a camera pose and an ellipsoid model.
 Typical usage::
 
     import numpy as np
-    from found_CLI_tools.cameraGeometry import Camera, sphericalToRotationDegrees
-    from found_CLI_tools.generatePoints import generateEdgePoints
+    from limb.utils._camera import Camera
+    from limb.simulation.edge.conic import generate_edge_points, generate_camera_conic
 
     Ap = np.diag([1/6378.1366**2, 1/6378.1366**2, 1/6356.7519**2])
     cam = Camera(focal_length, pixel_size, x_res, y_res)
-    TPC = sphericalToRotationDegrees(ra, dec, roll)
     rc = TPC @ rp                  # world position → camera frame
-    points = generateEdgePoints(rc, Ap, TPC, cam)
+    points = generate_edge_points(rc, Ap, TPC, cam)
 """
+
+from typing import Optional
 
 import numpy as np
 
@@ -158,18 +159,37 @@ def sample_conic_at_all_rows_columns(conic: np.ndarray, camera: Camera) -> np.nd
     a, b, c, d, e, f = _conic_matrix_to_coeffs(conic)
     points: list[list[float]] = []
     for x in range(camera.x_resolution):
-        sols = solve_general_conic(a, b, c, d, e, f, float(x), "solve_y")
+        sols = solve_general_conic(a, b, c, d, e, f, float(x + .5), "solve_y")
         if sols is not None:
             for y in sols:
                 if 0 <= y < camera.y_resolution:
                     points.append([float(x), float(y)])
     for y in range(camera.y_resolution):
-        sols = solve_general_conic(a, b, c, d, e, f, float(y), "solve_x")
+        sols = solve_general_conic(a, b, c, d, e, f, float(y +.5), "solve_x")
         if sols is not None:
             for x in sols:
                 if 0 <= x < camera.x_resolution:
                     points.append([float(x), float(y)])
     return np.array(points, dtype=np.float64) if points else np.empty((0, 2), dtype=np.float64)
+
+
+def sort_points_polar_order(points: np.ndarray) -> np.ndarray:
+    """Sort (N, 2) pixel points by angle around their centroid for drawing a closed contour.
+
+    Args:
+        points: (N, 2) array of (x, y) coordinates.
+
+    Returns:
+        Points sorted by angle (radians) from centroid, shape (N, 2).
+        Returns a copy if N > 0, or the same empty array if N == 0.
+    """
+    if points.size == 0:
+        return points
+    cx = float(np.mean(points[:, 0]))
+    cy = float(np.mean(points[:, 1]))
+    angles = np.arctan2(points[:, 1] - cy, points[:, 0] - cx)
+    order = np.argsort(angles)
+    return points[order].copy()
 
 
 def generate_edge_points(
@@ -200,12 +220,65 @@ def generate_edge_points(
     """
     cam_conic = generate_camera_conic(pos, shape_matrix, orientation)
     pixel_conic = generate_pixel_conic(cam_conic, cam)
-    return sample_conic_at_all_rows_columns(pixel_conic, cam)
+    points = sample_conic_at_all_rows_columns(pixel_conic, cam)
+    return sort_points_polar_order(points)
 
 
-# Backward-compatible aliases for previous camelCase API names.
-generateCameraConic = generate_camera_conic
-generatePixelConic = generate_pixel_conic
-solveGeneralConic = solve_general_conic
-sampleConicAtAllRowsColumns = sample_conic_at_all_rows_columns
-generateEdgePoints = generate_edge_points
+def add_point_noise(
+    points: np.ndarray,
+    camera: Camera,
+    *,
+    gaussian_sigma: Optional[float | tuple[float, float]] = None,
+    n_false_points: int = 0,
+    rng: Optional[np.random.Generator] = None,
+) -> np.ndarray:
+    """Add Gaussian noise in x/y and/or random false points; return only in-image points.
+
+    Each input point can be perturbed by independent Gaussian noise. Optionally,
+    additional points are drawn uniformly at random in the image. Any point
+    (original+noise or false) that falls outside the image is dropped.
+
+    Args:
+        points: (N, 2) array of (x, y) pixel coordinates.
+        camera: Camera supplying x_resolution and y_resolution (image bounds).
+        gaussian_sigma: If set, add zero-mean Gaussian noise to each point.
+            Use a float for the same sigma in x and y, or (sigma_x, sigma_y).
+        n_false_points: Number of extra points to add uniformly at random
+            inside the image.
+        rng: Random generator for reproducibility. If None, uses default generator.
+
+    Returns:
+        (M, 2) array of (x, y) coordinates; all rows satisfy
+        0 <= x < width and 0 <= y < height. Order: perturbed true points
+        (that remain in bounds) first, then false points.
+    """
+    width = camera.x_resolution
+    height = camera.y_resolution
+    rng = rng if rng is not None else np.random.default_rng()
+
+    out_list: list[np.ndarray] = []
+
+    if points.size > 0:
+        pts = np.asarray(points, dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[1] != 2:
+            raise ValueError("points must have shape (N, 2)")
+        if gaussian_sigma is not None:
+            if isinstance(gaussian_sigma, (int, float)):
+                sx, sy = float(gaussian_sigma), float(gaussian_sigma)
+            else:
+                sx, sy = float(gaussian_sigma[0]), float(gaussian_sigma[1])
+            noise = rng.normal(0, (sx, sy), size=pts.shape)
+            pts = pts + noise
+        in_bounds = (pts[:, 0] >= 0) & (pts[:, 0] < width) & (pts[:, 1] >= 0) & (pts[:, 1] < height)
+        kept = pts[in_bounds]
+        if kept.size > 0:
+            out_list.append(kept)
+
+    if n_false_points > 0:
+        x_false = rng.uniform(0, width, size=n_false_points)
+        y_false = rng.uniform(0, height, size=n_false_points)
+        out_list.append(np.column_stack([x_false, y_false]))
+
+    if not out_list:
+        return np.empty((0, 2), dtype=np.float64)
+    return np.vstack(out_list)

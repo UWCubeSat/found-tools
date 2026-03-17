@@ -146,17 +146,7 @@ def _conic_coeffs_from_row(row: pd.Series) -> np.ndarray:
     """
     semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
     shape_matrix = _shape_matrix_from_axes(semi_axes)
-    width = int(row["cam_x_resolution"])
-    height = int(row["cam_y_resolution"])
-    camera = Camera(
-        focal_length=row["cam_focal_length"],
-        x_pixel_pitch=row["cam_x_pixel_pitch"],
-        y_pixel_pitch=row["cam_y_pixel_pitch"],
-        x_resolution=width,
-        y_resolution=height,
-        x_center=row["cam_x_center"],
-        y_center=row["cam_y_center"],
-    )
+    camera = Camera.from_row(row)
     quat = np.array(
         [row["qx"], row["qy"], row["qz"], row["qw"]],
         dtype=np.float64,
@@ -200,18 +190,7 @@ def _calculate_conic_coeffs(
         row = df.iloc[i]
         semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
         shape_matrix = _shape_matrix_from_axes(semi_axes)
-
-        width = int(row["cam_x_resolution"])
-        height = int(row["cam_y_resolution"])
-        camera = Camera(
-            focal_length=row["cam_focal_length"],
-            x_pixel_pitch=row["cam_x_pixel_pitch"],
-            y_pixel_pitch=row["cam_y_pixel_pitch"],
-            x_resolution=width,
-            y_resolution=height,
-            x_center=row["cam_x_center"],
-            y_center=row["cam_y_center"],
-        )
+        camera = Camera.from_row(row)
 
         quat = np.array(
             [row["qx"], row["qy"], row["qz"], row["qw"]],
@@ -228,7 +207,7 @@ def _calculate_conic_coeffs(
         image_conic = generate_camera_conic(rc, shape_matrix, tpc)
         pixel_conic = generate_pixel_conic(image_conic, camera)
 
-        key = (width, height)
+        key = (camera.x_resolution, camera.y_resolution)
         if key not in out:
             out[key] = ([], [], [], [])
         out[key][0].append(i)

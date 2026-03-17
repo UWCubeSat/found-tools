@@ -14,7 +14,7 @@ from limb.utils.plot import edge_plot
 
 def main():
     df = pd.read_csv("sim_metadata.csv", index_col=0)
-    row = df.iloc[0]
+    row = df.iloc[11]
 
     semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
     shape_matrix = _shape_matrix_from_axes(semi_axes)
@@ -49,11 +49,12 @@ def main():
     window_length = 50.0
 
     edge_plot(
-        "sim_images/img_000000.png",
+        "sim_images/img_000011.png",
         points,
         center_point=center_point,
         window_length=window_length,
-        pixel_conic=pixel_conic,
+        true_points=points,
+        save_path="limb_plot.png",
     )
 
 if __name__ == "__main__":
