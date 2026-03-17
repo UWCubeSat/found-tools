@@ -5,7 +5,9 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 
-from limb.simulation.edge.conic import generate_camera_conic, generate_pixel_conic, _conic_matrix_to_coeffs, _shape_matrix_from_axes
+from limb.simulation.edge.conic import generate_camera_conic, generate_pixel_conic, _conic_matrix_to_coeffs, 
+_shape_matrix_from_axes, sample_conic_at_all_rows_columns, sort_points_polar_order, generate_edge_points
+
 from limb.simulation.metadata.state import generate_satellite_state, generate_uniform_directions
 from limb.utils._camera import Camera, focal_length_from_fov
 
