@@ -138,7 +138,7 @@ def _fill_setup(
     return pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
 
-def _conic_coeffs_from_row(row: pd.Series) -> np.ndarray:
+def _conic_from_row(row: pd.Series) -> np.ndarray:
     """Compute conic coefficients (a,b,c,d,e,f) from a single simulation metadata row.
 
     Row must contain: shape_axis_a/b/c, cam_*, qx,qy,qz,qw, true_pos_x/y/z.
@@ -159,9 +159,12 @@ def _conic_coeffs_from_row(row: pd.Series) -> np.ndarray:
     )
     rc = tpc @ sat_pos
     image_conic = generate_camera_conic(rc, shape_matrix, tpc)
-    pixel_conic = generate_pixel_conic(image_conic, camera)
-    return np.array(_conic_matrix_to_coeffs(pixel_conic), dtype=np.float64)
+    return generate_pixel_conic(image_conic, camera)
 
+def points_from_row(row: pd.Series) -> np.ndarray:
+    conic = _conic_from_row(row)
+    points = sample_conic_at_all_rows_columns(conic, Camera.from_row(row))
+    return sort_points_polar_order(points)
 
 def _calculate_conic_coeffs(
     df_or_path: pd.DataFrame | str | Path,
@@ -186,32 +189,16 @@ def _calculate_conic_coeffs(
 
     out: dict[tuple[int, int], tuple[list[int], list[np.ndarray], list[np.ndarray], list[np.ndarray]]] = {}
 
-    for i in range(len(df)):
-        row = df.iloc[i]
-        semi_axes = [row["shape_axis_a"], row["shape_axis_b"], row["shape_axis_c"]]
-        shape_matrix = _shape_matrix_from_axes(semi_axes)
+    for idx, row in df.iterrows():
         camera = Camera.from_row(row)
-
-        quat = np.array(
-            [row["qx"], row["qy"], row["qz"], row["qw"]],
-            dtype=np.float64,
-        )
-        tcp = R.from_quat(quat).as_matrix()
-        tpc = tcp.T
-        sat_pos = np.array(
-            [row["true_pos_x"], row["true_pos_y"], row["true_pos_z"]],
-            dtype=np.float64,
-        )
-        rc = tpc @ sat_pos
-        
-        image_conic = generate_camera_conic(rc, shape_matrix, tpc)
-        pixel_conic = generate_pixel_conic(image_conic, camera)
+        conic = _conic_from_row(row)
+        coeffs = _conic_matrix_to_coeffs(conic)
 
         key = (camera.x_resolution, camera.y_resolution)
         if key not in out:
             out[key] = ([], [], [], [])
         out[key][0].append(i)
-        out[key][1].append(_conic_matrix_to_coeffs(pixel_conic))
+        out[key][1].append(coeffs)
         out[key][2].append(camera.inverse_calibration_matrix),
         out[key][3].append(rc),
         
