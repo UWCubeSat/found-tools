@@ -77,6 +77,34 @@ class Camera:
             dtype=np.float64,
         )
 
+    def camera_to_pixel(self, vector_camera: np.ndarray) -> np.ndarray:
+        """Project a 3D vector in camera frame to pixel coordinates.
+
+        Camera frame: x is optical axis (depth), y and z are image plane.
+        Uses similar triangles for camera→image, then calibration matrix for image→pixel.
+        Cannot handle points behind the camera (vector_camera[0] must be > 0).
+
+        Parameters
+        ----------
+        vector_camera : np.ndarray
+            Shape (3,) – position or direction in camera frame (m or arbitrary scale).
+
+        Returns
+        -------
+        np.ndarray
+            Shape (2,) – (pixel_x, pixel_y).
+
+        Raises
+        ------
+        AssertionError
+            If vector_camera[0] <= 0 (point behind or on camera plane).
+        """
+        assert vector_camera[0] > 0, "Cannot project points behind the camera"
+        x, y, z = vector_camera[0], vector_camera[1], vector_camera[2]
+        homogenous_image = np.array([1.0, y / x, z / x], dtype=np.float64)
+        homogenous_pixel = self.calibration_matrix @ homogenous_image
+        return homogenous_pixel[:2]
+
     def edge_angle(self) -> float:
         """Return an edge angle using the constructor-selected strategy."""
         if self.edge_angle_mode == "randomized":
