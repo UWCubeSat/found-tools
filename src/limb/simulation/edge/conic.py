@@ -165,6 +165,8 @@ def sample_conic_at_all_rows_columns(
     Only points with 0 ≤ x < x_resolution and 0 ≤ y < y_resolution are returned.
     Points are filtered to the visible horizon arc (sky side): same as render, only
     points where the pixel ray dot rc <= 0 are kept.
+    At most one point per pixel is returned: when multiple solutions fall in the same
+    pixel, the first is kept and the rest are discarded.
 
     Args:
         conic: 3×3 symmetric conic matrix in pixel coordinates.
@@ -193,11 +195,20 @@ def sample_conic_at_all_rows_columns(
                     float(x), float(y), rc, k_inv
                 ):
                     points.append([float(x), float(y)])
-    return (
-        np.array(points, dtype=np.float64)
-        if points
-        else np.empty((0, 2), dtype=np.float64)
-    )
+    if not points:
+        return np.empty((0, 2), dtype=np.float64)
+    pts = np.array(points, dtype=np.float64)
+    # One point per pixel: keep first in each pixel, discard extras
+    pix_x = np.floor(pts[:, 0]).astype(int)
+    pix_y = np.floor(pts[:, 1]).astype(int)
+    seen: set[tuple[int, int]] = set()
+    keep: list[np.ndarray] = []
+    for i in range(len(pts)):
+        key = (pix_x[i], pix_y[i])
+        if key not in seen:
+            seen.add(key)
+            keep.append(pts[i])
+    return np.array(keep, dtype=np.float64)
 
 
 def sort_points_polar_order(points: np.ndarray) -> np.ndarray:
