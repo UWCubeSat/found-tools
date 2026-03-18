@@ -45,6 +45,7 @@ def main() -> None:
         xlabel="Range (m)",
         ylabel="True apparent radius (px)",
         n_bins=10,
+        confidence=0.99,
         save_path=save_path,
     )
     print("Done.")

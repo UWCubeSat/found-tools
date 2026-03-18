@@ -155,9 +155,9 @@ def column_summary(
 ) -> list[dict[str, float | int]]:
     """Compute mean, std, and prediction interval per distance clump, then print.
 
-    Groups rows into mini clumps by distance using quantile-based binning: ranges
-    with more data get more (narrower) bins for higher fidelity; sparse ranges get
-    fewer (wider) bins. For each clump, computes mean, standard deviation, and
+    Groups rows into distance bins with edges from the minimum to maximum distance
+    (equal-width), so there is always a bin at the least and greatest distance.
+    For each clump, computes mean, standard deviation, and
     prediction interval for the given column, then prints a table and returns the
     per-clump stats.
 
@@ -180,8 +180,7 @@ def column_summary(
     dropna : bool, optional
         If True (default), drop NaN in the target column before grouping/stats.
     n_bins : int, optional
-        Number of distance bins (mini clumps). Quantile-based so denser ranges
-        get finer bins. Default is 10.
+        Number of distance bins (equal-width from min to max distance). Default is 10.
     distance_column : str or None, optional
         Column to use as distance for binning. If None, distance is computed as
         norm of (true_pos_x, true_pos_y, true_pos_z).
@@ -221,15 +220,18 @@ def column_summary(
     if work.empty:
         raise ValueError("No rows with valid distance for binning")
 
-    # Bin by distance (quantile-based): more bins where data is denser, fewer where sparse
+    # Bin by distance so first bin includes min and last bin includes max (no edge drop)
     n_bins = max(1, int(n_bins))
-    work["_bin"] = pd.qcut(
-        work["_distance"],
-        q=n_bins,
-        labels=False,
-        duplicates="drop",
+    d_min = float(work["_distance"].min())
+    d_max = float(work["_distance"].max())
+    step = (d_max - d_min) / n_bins if d_max > d_min else 1.0
+    # Assign bin 0..n_bins-1; clip so max value (d_max) lands in last bin
+    work["_bin"] = np.clip(
+        np.floor((work["_distance"].values - d_min) / step).astype(int),
+        0,
+        n_bins - 1,
     )
-    bin_ids = sorted(work["_bin"].dropna().unique())
+    bin_ids = sorted(work["_bin"].unique())
 
     results: list[dict[str, float | int]] = []
     for b in bin_ids:
@@ -242,6 +244,11 @@ def column_summary(
         stats_dict["distance_lo"] = distance_lo
         stats_dict["distance_hi"] = distance_hi
         results.append(stats_dict)
+
+    # Ensure first bin starts at min and last bin ends at max (for plotting/coverage)
+    if results:
+        results[0]["distance_lo"] = d_min
+        results[-1]["distance_hi"] = d_max
 
     if print_results:
         _print_column_summary_table(column, results, confidence)

@@ -254,22 +254,23 @@ def plot_column_summary(
     coeff_hw = np.polyfit(x_sorted, half_width, 2)
     x_min, x_max = x_all.min(), x_all.max()
     pad = 0.05 * (x_max - x_min) if x_max > x_min else 1.0
-    x_curve = np.linspace(x_min - pad, x_max + pad, 200)
+    # Confidence interval curves from least to greatest distance (full data range)
+    x_curve = np.linspace(x_min, x_max, 200)
     center_curve = np.polyval(coeff_center, x_curve)
     hw_curve = np.maximum(np.polyval(coeff_hw, x_curve), 0.0)
     ax.plot(
         x_curve,
         center_curve - hw_curve,
-        linestyle=":",
-        color="tab:orange",
+        linestyle="-",
+        color="black",
         linewidth=1.5,
         label=f"{int(round(confidence * 100))}% prediction interval",
     )
     ax.plot(
         x_curve,
         center_curve + hw_curve,
-        linestyle=":",
-        color="tab:orange",
+        linestyle="-",
+        color="black",
         linewidth=1.5,
     )
 
