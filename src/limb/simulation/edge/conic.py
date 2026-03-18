@@ -227,6 +227,7 @@ def generate_edge_points(
     cam: Camera,
     gaussian_sigma: Optional[float | tuple[float, float]] = None,
     n_false_points: int = 0,
+    max_points: Optional[int] = None,
     truncate: int = 0,
     rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
@@ -252,6 +253,8 @@ def generate_edge_points(
             point. Use a float for same sigma in x and y, or (sigma_x, sigma_y).
         n_false_points: Number of extra points to add uniformly at random
             inside the image.
+        max_points: If set, randomly downsample edge points to at most this many
+            before applying noise. Ignored if None or when not using noise/false points.
         truncate: Number of decimal places for point coordinates (e.g. 0 for
             integer pixels, 2 for two decimals). Applied to all returned points.
         rng: Random generator for reproducibility. If None, uses default.
@@ -271,6 +274,7 @@ def generate_edge_points(
             cam,
             gaussian_sigma=gaussian_sigma,
             n_false_points=n_false_points,
+            max_points=max_points,
             truncate=truncate,
             rng=rng,
         )
@@ -284,6 +288,7 @@ def add_point_noise(
     camera: Camera,
     gaussian_sigma: Optional[float | tuple[float, float]] = None,
     n_false_points: int = 0,
+    max_points: Optional[int] = None,
     truncate: int = 0,
     rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
@@ -302,6 +307,8 @@ def add_point_noise(
             Use a float for the same sigma in x and y, or (sigma_x, sigma_y).
         n_false_points: Number of extra points to add uniformly at random
             inside the image.
+        max_points: If set, randomly downsample input points to at most this many
+            before applying noise. Ignored if None or if input has fewer points.
         truncate: Number of decimal places for point coordinates (e.g. 0 for
             integer pixels, 2 for two decimals). Applied to all returned points.
         rng: Random generator for reproducibility. If None, uses default generator.
@@ -322,6 +329,9 @@ def add_point_noise(
         pts = np.asarray(points, dtype=np.float64)
         if pts.ndim != 2 or pts.shape[1] != 2:
             raise ValueError("points must have shape (N, 2)")
+        if max_points is not None and max_points >= 1 and pts.shape[0] > max_points:
+            idx = rng.choice(pts.shape[0], size=max_points, replace=False)
+            pts = pts[idx]
         if gaussian_sigma is not None:
             if isinstance(gaussian_sigma, (int, float)):
                 sx, sy = float(gaussian_sigma), float(gaussian_sigma)
