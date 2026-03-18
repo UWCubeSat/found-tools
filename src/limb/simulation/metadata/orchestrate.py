@@ -322,8 +322,9 @@ def _setup_simulation(
 
     expirements = itertools.product(fovs, resolutions, distances)
     df = initialize_sim_df()
-    earth_directions = generate_uniform_directions(num_earth_points)
-
+    # earth_directions = generate_uniform_directions(num_earth_points)
+    earth_directions = np.array([[0.0, 0.0, 1.0]])
+    
     for exp in expirements:
         focal_length = focal_length_from_fov(
             fov=exp[0], resolution=exp[1], pixel_pitch=PIXEL_PITCH

@@ -152,7 +152,7 @@ def _point_on_visible_arc(
     Matches render logic: keep points where dot(ray, rc) <= 0.
     """
     ray = k_inv @ np.array([x, y, 1.0], dtype=np.float64)
-    return float(np.dot(ray, rc)) <= 0.0
+    return float(np.dot(ray, -rc)) >= 0.0
 
 
 def sample_conic_at_all_rows_columns(

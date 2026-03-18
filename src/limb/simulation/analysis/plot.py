@@ -14,6 +14,8 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
 
+from limb.simulation.analysis.metrics import fill_pixel_metrics
+
 # Columns used for camera identity (must be present in df)
 _CAMERA_KEY_COLS = ("cam_focal_length", "cam_x_resolution", "cam_y_resolution")
 
@@ -37,8 +39,8 @@ def _ridge_fit_curve(
     x: np.ndarray,
     y: np.ndarray,
     x_eval: np.ndarray,
-    degree: int = 6,
-    alpha: float = 10.0,
+    degree: int = 5,
+    alpha: float = 1000.0,
 ) -> np.ndarray:
     """Fit y as a polynomial of x with ridge regression; return predicted values at x_eval."""
     x = np.asarray(x, dtype=np.float64).ravel()
@@ -63,11 +65,17 @@ def _ridge_fit_curve(
     n_features = X.shape[1]
     gram = X.T @ X + alpha * np.eye(n_features)
     rhs = X.T @ y
-    coef = np.linalg.solve(gram, rhs)
-    out = Xe @ coef
+    try:
+        coef = np.linalg.solve(gram, rhs)
+    except np.linalg.LinAlgError:
+        return np.full_like(x_eval, float(np.mean(y)))
+    if not np.all(np.isfinite(coef)) or np.any(np.abs(coef) > 1e10):
+        return np.full_like(x_eval, float(np.mean(y)))
+    with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+        out = Xe @ coef
     if not np.any(np.isfinite(out)):
         out = np.full_like(x_eval, float(np.mean(y)))
-    return out
+    return np.asarray(out, dtype=np.float64)
 
 
 def _smooth_prediction_bounds(
@@ -75,8 +83,8 @@ def _smooth_prediction_bounds(
     lower: np.ndarray,
     upper: np.ndarray,
     n_fine: int = 500,
-    degree: int = 6,
-    alpha: float = 1.0,
+    degree: int = 5,
+    alpha: float = 1000.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fit prediction interval bounds with ridge regression (polynomial) and evaluate on a fine grid."""
     x_fine = np.linspace(float(x.min()), float(x.max()), n_fine)
@@ -238,18 +246,21 @@ def plot_radius_residuals_vs_range(
 ):
     """Plot radius residuals (pixels) vs true range (m) with 99.7% prediction interval.
 
-    Uses simulation metadata DataFrame with true_pos_*, true_r_apparent, out_r_apparent,
-    and camera columns. Range = ‖true_pos‖; radius residual = out_r_apparent - true_r_apparent.
-    Points with different cameras (focal length, resolution) are plotted in different colors.
-    Rows with missing out_r_apparent are dropped. The band is a range-dependent 3σ prediction
-    interval.
+    Accepts the simulation metadata DataFrame directly: if true_r_apparent / out_r_apparent
+    (and camera columns) are missing, fill_pixel_metrics(df) is applied so a raw orchestrate
+    df can be passed. Uses true_pos_*, true_r_apparent, out_r_apparent, and camera columns.
+    Range = ‖true_pos‖; radius residual = out_r_apparent - true_r_apparent. Rows with
+    missing out_r_apparent are dropped. The band is a range-dependent 3σ prediction interval.
     """
     need = ["true_pos_x", "true_pos_y", "true_pos_z", "true_r_apparent", "out_r_apparent"] + list(_CAMERA_KEY_COLS)
+    work = df.copy()
+    if not all(c in work.columns for c in need):
+        work = fill_pixel_metrics(work)
     for c in need:
-        if c not in df.columns:
-            raise ValueError(f"DataFrame must contain column {c!r}")
-    valid = df["true_r_apparent"].notna() & df["out_r_apparent"].notna()
-    work = df.loc[valid].copy()
+        if c not in work.columns:
+            raise ValueError(f"DataFrame must contain column {c!r} (or a df that fill_pixel_metrics can fill)")
+    valid = work["true_r_apparent"].notna() & work["out_r_apparent"].notna()
+    work = work.loc[valid].copy()
     if len(work) == 0:
         raise ValueError("No rows with both true_r_apparent and out_r_apparent")
     work["_range_m"] = np.linalg.norm(
@@ -310,25 +321,28 @@ def plot_centroid_residuals_in_illumination_frame(
 ):
     """Plot X and Y centroid residuals (illumination frame) vs true range (m).
 
-    Uses simulation metadata DataFrame with true_pos_*, true/out x/y centroids,
-    and camera columns. Range = ‖true_pos‖; residuals = out_*_centroid - true_*_centroid.
-    Points with different cameras are plotted in different colors. Rows with
-    missing out_x_centroid or out_y_centroid are dropped. Each subplot shows a
-    range-dependent 99.7% prediction interval.
+    Accepts the simulation metadata DataFrame directly: if true/out centroid columns
+    (and camera columns) are missing, fill_pixel_metrics(df) is applied so a raw
+    orchestrate df can be passed. Uses true_pos_*, true/out x/y centroids, and camera
+    columns. Range = ‖true_pos‖; residuals = out_*_centroid - true_*_centroid. Rows
+    with missing out centroids are dropped. Each subplot shows a 99.7% prediction interval.
     """
     need = [
         "true_pos_x", "true_pos_y", "true_pos_z",
         "true_x_centroid", "true_y_centroid",
         "out_x_centroid", "out_y_centroid",
     ] + list(_CAMERA_KEY_COLS)
+    work = df.copy()
+    if not all(c in work.columns for c in need):
+        work = fill_pixel_metrics(work)
     for c in need:
-        if c not in df.columns:
-            raise ValueError(f"DataFrame must contain column {c!r}")
+        if c not in work.columns:
+            raise ValueError(f"DataFrame must contain column {c!r} (or a df that fill_pixel_metrics can fill)")
     valid = (
-        df["true_x_centroid"].notna() & df["true_y_centroid"].notna()
-        & df["out_x_centroid"].notna() & df["out_y_centroid"].notna()
+        work["true_x_centroid"].notna() & work["true_y_centroid"].notna()
+        & work["out_x_centroid"].notna() & work["out_y_centroid"].notna()
     )
-    work = df.loc[valid].copy()
+    work = work.loc[valid].copy()
     if len(work) == 0:
         raise ValueError("No rows with both true and out centroid columns")
     work["_range_m"] = np.linalg.norm(

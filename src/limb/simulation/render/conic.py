@@ -175,9 +175,8 @@ def process_simulation(
 
             calibrationy = batch_K[:, :, 1].view(-1, 3, 1, 1)
             calibrationz = batch_K[:, :, 2].view(-1, 3, 1, 1)
-            dirToEarthx = batch_rc[:, 0].view(-1, 1, 1)
-            dirToEarthy = batch_rc[:, 1].view(-1, 1, 1)
-            dirToEarthz = batch_rc[:, 2].view(-1, 1, 1)
+            # rc: camera position in camera frame (batch, 3, 1, 1), same role as rc in edge/conic
+            rc = batch_rc.view(-1, 3, 1, 1)
 
             with torch.no_grad():
                 Q = (
@@ -188,13 +187,10 @@ def process_simulation(
                     + E * grid_y
                     + F
                 )
-                # check if we're dealing with a hyperbola (yuck)
-                pixelVec = calibrationx * grid_x + calibrationy * grid_y + calibrationz
-                wrong_side_mask = (
-                    pixelVec[:, 0] * dirToEarthx
-                    + pixelVec[:, 1] * dirToEarthy
-                    + pixelVec[:, 2] * dirToEarthz
-                ) > 0
+                # Visible arc: keep points where dot(ray, -rc) >= 0 (same as edge/conic)
+                pixel_vec = calibrationx * grid_x + calibrationy * grid_y + calibrationz
+                wrong_side_mask = (pixel_vec * rc).sum(dim=1) > 0
+                
                 # 2. Gradient for Taubin Distance
                 gx = 2 * A * grid_x + B * grid_y + D
                 gy = B * grid_x + 2 * C * grid_y + E
