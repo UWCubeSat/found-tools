@@ -373,4 +373,7 @@ def setup_simulation(
         num_spins_per_position,
         num_radials_per_spin,
     )
+    from limb.simulation.analysis.metrics import fill_pixel_metrics
+
+    df = fill_pixel_metrics(df)
     df.to_csv(output_path, index=True)
