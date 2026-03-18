@@ -225,10 +225,10 @@ def _calculate_conic_coeffs(
 
     Returns
     -------
-    dict[tuple[int, int], tuple[np.ndarray, np.ndarray, tuple[float32, float32]]]
+    dict[tuple[int, int], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]
         Keys are (cam_x_resolution, cam_y_resolution). Values are
-        (row_indices, coeffs, centroid): row_indices 1d int (df row index per image),
-        coeffs shape (M, 6) float32. cal_mat
+        (row_indices, coeffs, cal_mat, rc): row_indices 1d int (df row index per image),
+        coeffs shape (M, 6) float64, cal_mat (M, 3, 3) float64, rc (M, 3) float64.
         Keys are sorted for deterministic iteration.
     """
     if isinstance(df_or_path, (str, Path)):
@@ -257,9 +257,9 @@ def _calculate_conic_coeffs(
     return {
         k: (
             np.array(idxs, dtype=np.int64),
-            np.array(v, dtype=np.float32),
-            np.array(c, dtype=np.float32),
-            np.array(r, dtype=np.float32),
+            np.array(v, dtype=np.float64),
+            np.array(c, dtype=np.float64),
+            np.array(r, dtype=np.float64),
         )
         for k, (idxs, v, c, r) in sorted(out.items())
     }
@@ -324,7 +324,7 @@ def _setup_simulation(
     df = initialize_sim_df()
     # earth_directions = generate_uniform_directions(num_earth_points)
     earth_directions = np.array([[0.0, 0.0, 1.0]])
-    
+
     for exp in expirements:
         focal_length = focal_length_from_fov(
             fov=exp[0], resolution=exp[1], pixel_pitch=PIXEL_PITCH

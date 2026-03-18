@@ -189,7 +189,7 @@ def process_simulation(
                 )
                 # Visible arc: keep points where dot(ray, -rc) >= 0 (same as edge/conic)
                 pixel_vec = calibrationx * grid_x + calibrationy * grid_y + calibrationz
-                wrong_side_mask = (pixel_vec * rc).sum(dim=1) > 0
+                wrong_side_mask = (pixel_vec * -rc).sum(dim=1) > 0
                 
                 # 2. Gradient for Taubin Distance
                 gx = 2 * A * grid_x + B * grid_y + D

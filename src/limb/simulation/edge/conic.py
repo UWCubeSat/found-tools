@@ -91,7 +91,7 @@ def _conic_matrix_to_coeffs(conic: np.ndarray) -> np.ndarray:
             2.0 * conic[1, 2],
             conic[2, 2],
         ],
-        dtype=np.float32,
+        dtype=np.float64,
     )
 
 
@@ -211,12 +211,13 @@ def sort_points_polar_order(points: np.ndarray) -> np.ndarray:
         Returns a copy if N > 0, or the same empty array if N == 0.
     """
     if points.size == 0:
-        return points
-    cx = float(np.mean(points[:, 0]))
-    cy = float(np.mean(points[:, 1]))
-    angles = np.arctan2(points[:, 1] - cy, points[:, 0] - cx)
+        return np.empty((0, 2), dtype=np.float64)
+    pts = np.asarray(points, dtype=np.float64)
+    cx = float(np.mean(pts[:, 0]))
+    cy = float(np.mean(pts[:, 1]))
+    angles = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
     order = np.argsort(angles)
-    return points[order].copy()
+    return pts[order].copy()
 
 
 def generate_edge_points(
@@ -274,7 +275,7 @@ def generate_edge_points(
             rng=rng,
         )
     else:
-        points = np.round(points, decimals=truncate)
+        points = np.asarray(np.round(points, decimals=truncate), dtype=np.float64)
     return points
 
 
@@ -317,6 +318,7 @@ def add_point_noise(
     out_list: list[np.ndarray] = []
 
     if points.size > 0:
+        # Cast to float64 (double) so we never keep or propagate float32; asarray copies when dtypes differ.
         pts = np.asarray(points, dtype=np.float64)
         if pts.ndim != 2 or pts.shape[1] != 2:
             raise ValueError("points must have shape (N, 2)")
@@ -333,17 +335,18 @@ def add_point_noise(
             & (pts[:, 1] >= 0)
             & (pts[:, 1] < height)
         )
-        kept = np.round(pts[in_bounds], decimals=truncate)
+        kept = np.round(pts[in_bounds], decimals=truncate).astype(np.float64)
         if kept.size > 0:
             out_list.append(kept)
 
     if n_false_points > 0:
         x_false = rng.uniform(0, width, size=n_false_points)
         y_false = rng.uniform(0, height, size=n_false_points)
-        out_list.append(
-            np.round(np.column_stack([x_false, y_false]), decimals=truncate)
-        )
+        false_pts = np.round(
+            np.column_stack([x_false, y_false]), decimals=truncate
+        ).astype(np.float64)
+        out_list.append(false_pts)
 
     if not out_list:
         return np.empty((0, 2), dtype=np.float64)
-    return np.vstack(out_list)
+    return np.vstack(out_list).astype(np.float64)
