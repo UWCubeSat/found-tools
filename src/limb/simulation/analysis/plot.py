@@ -10,9 +10,64 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
-from scipy.interpolate import CubicSpline
+
+# Columns used for camera identity (must be present in df)
+_CAMERA_KEY_COLS = ("cam_focal_length", "cam_x_resolution", "cam_y_resolution")
+
+
+def _camera_id_from_row(row: pd.Series) -> tuple[float, int, int]:
+    """Unique camera identifier from a metadata row."""
+    return (
+        float(row["cam_focal_length"]),
+        int(row["cam_x_resolution"]),
+        int(row["cam_y_resolution"]),
+    )
+
+
+def _camera_label(cam_id: tuple[float, int, int]) -> str:
+    """Human-readable label for legend."""
+    f, wx, wy = cam_id
+    return f"{wx}×{wy} f={f:.4g}"
+
+
+def _ridge_fit_curve(
+    x: np.ndarray,
+    y: np.ndarray,
+    x_eval: np.ndarray,
+    degree: int = 6,
+    alpha: float = 10.0,
+) -> np.ndarray:
+    """Fit y as a polynomial of x with ridge regression; return predicted values at x_eval."""
+    x = np.asarray(x, dtype=np.float64).ravel()
+    y = np.asarray(y, dtype=np.float64).ravel()
+    x_eval = np.asarray(x_eval, dtype=np.float64).ravel()
+    # Drop NaNs so fit is well-defined
+    ok = np.isfinite(x) & np.isfinite(y)
+    if not np.any(ok):
+        return np.full_like(x_eval, np.nanmean(y))
+    x, y = x[ok], y[ok]
+    xmin, xmax = float(np.min(x)), float(np.max(x))
+    if xmax <= xmin:
+        return np.full_like(x_eval, float(np.mean(y)))
+    xn = (x - xmin) / (xmax - xmin)
+    xn_eval = np.clip((x_eval - xmin) / (xmax - xmin), 0.0, 1.0)
+    degree = min(degree, len(x) - 1)
+    if degree < 0:
+        return np.full_like(x_eval, float(np.mean(y)))
+    X = np.column_stack([xn**i for i in range(degree + 1)])
+    Xe = np.column_stack([xn_eval**i for i in range(degree + 1)])
+    # Ridge: (X'X + alpha*I)^{-1} X' y
+    n_features = X.shape[1]
+    gram = X.T @ X + alpha * np.eye(n_features)
+    rhs = X.T @ y
+    coef = np.linalg.solve(gram, rhs)
+    out = Xe @ coef
+    if not np.any(np.isfinite(out)):
+        out = np.full_like(x_eval, float(np.mean(y)))
+    return out
 
 
 def _smooth_prediction_bounds(
@@ -20,12 +75,14 @@ def _smooth_prediction_bounds(
     lower: np.ndarray,
     upper: np.ndarray,
     n_fine: int = 500,
+    degree: int = 6,
+    alpha: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Interpolate prediction interval bounds as smooth curves on a finer grid."""
-    cs_low = CubicSpline(x, lower)
-    cs_upp = CubicSpline(x, upper)
+    """Fit prediction interval bounds with ridge regression (polynomial) and evaluate on a fine grid."""
     x_fine = np.linspace(float(x.min()), float(x.max()), n_fine)
-    return x_fine, cs_low(x_fine), cs_upp(x_fine)
+    lower_smooth = _ridge_fit_curve(x, lower, x_fine, degree=degree, alpha=alpha)
+    upper_smooth = _ridge_fit_curve(x, upper, x_fine, degree=degree, alpha=alpha)
+    return x_fine, lower_smooth, upper_smooth
 
 
 def _prediction_interval_bounds(
@@ -36,12 +93,14 @@ def _prediction_interval_bounds(
     min_points: int = 5,
     fallback_sigma: Optional[float] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute prediction interval upper/lower curves vs x via local std.
+    """Compute prediction interval upper/lower curves vs x via k-nearest neighbors.
 
-    For each x_grid value, take y values whose x is in a neighborhood (adaptive
-    half-window), compute mean and std, then lower = mean - n_sigma*std,
-    upper = mean + n_sigma*std. If a neighborhood has fewer than min_points,
-    use fallback_sigma for the half-width (or global std if fallback_sigma is None).
+    For each x_grid value, take the k nearest data points (by x distance), compute
+    mean and std of their y values, then lower = mean - n_sigma*std,
+    upper = mean + n_sigma*std. This keeps the band varying across the full range
+    instead of flattening where data is sparse. k = max(min_points, 10); if there
+    are fewer than k points total, all points are used. fallback_sigma is used
+    when local std is 0 or invalid.
 
     Returns:
         lower, upper: arrays same shape as x_grid.
@@ -49,28 +108,34 @@ def _prediction_interval_bounds(
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
     x_grid = np.asarray(x_grid, dtype=np.float64)
-    x_range = np.ptp(x)
-    half_window = max(x_range / 20.0, 1.0) if x_range > 0 else 1.0
+    n_data = len(x)
+    k = min(max(min_points, 10), n_data)
+    if k < 1:
+        global_std = float(fallback_sigma) if fallback_sigma is not None else 0.0
+        if fallback_sigma is None and n_data:
+            global_std = float(np.nanstd(y)) or 0.0
+        return (
+            np.full_like(x_grid, -n_sigma * global_std),
+            np.full_like(x_grid, n_sigma * global_std),
+        )
     lower = np.full_like(x_grid, np.nan)
     upper = np.full_like(x_grid, np.nan)
     global_std = None if fallback_sigma is not None else np.nanstd(y)
     if global_std is not None and (not np.isfinite(global_std) or global_std == 0):
         global_std = 0.0
+    fallback = fallback_sigma if fallback_sigma is not None else global_std
+    if fallback is None:
+        fallback = 0.0
     for i, x0 in enumerate(x_grid):
-        in_window = np.abs(x - x0) <= half_window
-        sigma = fallback_sigma if fallback_sigma is not None else global_std
-        if sigma is None:
-            sigma = 0.0
-        if np.sum(in_window) >= min_points:
-            mu = np.mean(y[in_window])
-            s = np.std(y[in_window])
-            if s == 0 or not np.isfinite(s):
-                s = sigma
-            lower[i] = mu - n_sigma * s
-            upper[i] = mu + n_sigma * s
-        else:
-            lower[i] = -n_sigma * sigma
-            upper[i] = n_sigma * sigma
+        dist = np.abs(x - x0)
+        idx = np.argpartition(dist, k - 1)[:k]
+        y_sub = y[idx]
+        mu = np.mean(y_sub)
+        s = np.std(y_sub)
+        if s == 0 or not np.isfinite(s):
+            s = fallback
+        lower[i] = mu - n_sigma * s
+        upper[i] = mu + n_sigma * s
     return lower, upper
 
 
@@ -166,30 +231,48 @@ def edge_plot(
 
 
 def plot_radius_residuals_vs_range(
-    ranges_m: np.ndarray,
-    radius_residuals_px: np.ndarray,
-    pass_ids: list[str],
-    radius_1sigma_px: float,
+    df: pd.DataFrame,
+    radius_1sigma_px: Optional[float] = None,
     target_label: str = "Moon",
     save_path: Optional[Path | str] = None,
 ):
     """Plot radius residuals (pixels) vs true range (m) with 99.7% prediction interval.
 
-    X-axis: true range (meters). Y-axis: radius residual (pixels). Multiple passes
-    are plotted with distinct colors. The band is a range-dependent 3σ prediction
-    interval (local std estimated in range windows; fallback to given sigma where
-    data are sparse).
+    Uses simulation metadata DataFrame with true_pos_*, true_r_apparent, out_r_apparent,
+    and camera columns. Range = ‖true_pos‖; radius residual = out_r_apparent - true_r_apparent.
+    Points with different cameras (focal length, resolution) are plotted in different colors.
+    Rows with missing out_r_apparent are dropped. The band is a range-dependent 3σ prediction
+    interval.
     """
-    unique_passes = sorted(set(pass_ids))
+    need = ["true_pos_x", "true_pos_y", "true_pos_z", "true_r_apparent", "out_r_apparent"] + list(_CAMERA_KEY_COLS)
+    for c in need:
+        if c not in df.columns:
+            raise ValueError(f"DataFrame must contain column {c!r}")
+    valid = df["true_r_apparent"].notna() & df["out_r_apparent"].notna()
+    work = df.loc[valid].copy()
+    if len(work) == 0:
+        raise ValueError("No rows with both true_r_apparent and out_r_apparent")
+    work["_range_m"] = np.linalg.norm(
+        work[["true_pos_x", "true_pos_y", "true_pos_z"]].values, axis=1
+    )
+    work["_radius_residual_px"] = work["out_r_apparent"] - work["true_r_apparent"]
+    work["_camera_id"] = work.apply(_camera_id_from_row, axis=1)
+    ranges_m = work["_range_m"].values
+    radius_residuals_px = work["_radius_residual_px"].values
+    sigma = radius_1sigma_px
+    if sigma is None or not np.isfinite(sigma):
+        sigma = float(np.nanstd(radius_residuals_px)) or 1.0
+
+    unique_cameras = sorted(set(work["_camera_id"]))
     fig, ax = plt.subplots(figsize=(10, 6))
-    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_passes)))
-    for i, pass_id in enumerate(unique_passes):
-        mask = np.array([pid == pass_id for pid in pass_ids])
+    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_cameras)))
+    for i, cam_id in enumerate(unique_cameras):
+        mask = work["_camera_id"] == cam_id
         ax.scatter(
-            ranges_m[mask],
-            radius_residuals_px[mask],
+            work.loc[mask, "_range_m"],
+            work.loc[mask, "_radius_residual_px"],
             c=[colors[i]],
-            label=pass_id,
+            label=_camera_label(cam_id),
             alpha=0.6,
             s=40,
         )
@@ -199,7 +282,7 @@ def plot_radius_residuals_vs_range(
         radius_residuals_px,
         range_array,
         n_sigma=3.0,
-        fallback_sigma=radius_1sigma_px,
+        fallback_sigma=sigma,
     )
     x_smooth, lower_smooth, upper_smooth = _smooth_prediction_bounds(
         range_array, lower, upper
@@ -210,8 +293,8 @@ def plot_radius_residuals_vs_range(
     ax.axhline(0, color="k", linestyle="-", linewidth=0.5, alpha=0.5)
     ax.set_xlabel("True Range (m)", fontsize=12)
     ax.set_ylabel("Radius Residual (pixels)", fontsize=12)
-    ax.set_title(f"{target_label} Radius Residuals for All Passes", fontsize=14)
-    ax.legend(loc="best", framealpha=0.9)
+    ax.set_title(f"{target_label} Radius Residuals by Camera", fontsize=14)
+    ax.legend(loc="upper right", framealpha=0.9)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     if save_path is not None:
@@ -220,38 +303,65 @@ def plot_radius_residuals_vs_range(
 
 
 def plot_centroid_residuals_in_illumination_frame(
-    ranges_m: np.ndarray,
-    centroid_x_px: np.ndarray,
-    centroid_y_px: np.ndarray,
-    pass_ids: list[str],
-    centroid_1sigma_px: float,
+    df: pd.DataFrame,
+    centroid_1sigma_px: Optional[float] = None,
     target_label: str = "Moon",
     save_path: Optional[Path | str] = None,
 ):
     """Plot X and Y centroid residuals (illumination frame) vs true range (m).
 
-    Two subplots: X along sun direction, Y perpendicular to sun. Each subplot
-    shows a range-dependent 99.7% prediction interval (local std in range
-    windows; fallback to given sigma where data are sparse).
+    Uses simulation metadata DataFrame with true_pos_*, true/out x/y centroids,
+    and camera columns. Range = ‖true_pos‖; residuals = out_*_centroid - true_*_centroid.
+    Points with different cameras are plotted in different colors. Rows with
+    missing out_x_centroid or out_y_centroid are dropped. Each subplot shows a
+    range-dependent 99.7% prediction interval.
     """
-    unique_passes = sorted(set(pass_ids))
+    need = [
+        "true_pos_x", "true_pos_y", "true_pos_z",
+        "true_x_centroid", "true_y_centroid",
+        "out_x_centroid", "out_y_centroid",
+    ] + list(_CAMERA_KEY_COLS)
+    for c in need:
+        if c not in df.columns:
+            raise ValueError(f"DataFrame must contain column {c!r}")
+    valid = (
+        df["true_x_centroid"].notna() & df["true_y_centroid"].notna()
+        & df["out_x_centroid"].notna() & df["out_y_centroid"].notna()
+    )
+    work = df.loc[valid].copy()
+    if len(work) == 0:
+        raise ValueError("No rows with both true and out centroid columns")
+    work["_range_m"] = np.linalg.norm(
+        work[["true_pos_x", "true_pos_y", "true_pos_z"]].values, axis=1
+    )
+    work["_centroid_x_residual_px"] = work["out_x_centroid"] - work["true_x_centroid"]
+    work["_centroid_y_residual_px"] = work["out_y_centroid"] - work["true_y_centroid"]
+    work["_camera_id"] = work.apply(_camera_id_from_row, axis=1)
+    ranges_m = work["_range_m"].values
+    centroid_x_px = work["_centroid_x_residual_px"].values
+    centroid_y_px = work["_centroid_y_residual_px"].values
+    sigma = centroid_1sigma_px
+    if sigma is None or not np.isfinite(sigma):
+        sigma = float(np.nanstd(np.concatenate([centroid_x_px, centroid_y_px]))) or 1.0
+
+    unique_cameras = sorted(set(work["_camera_id"]))
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
-    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_passes)))
-    for i, pass_id in enumerate(unique_passes):
-        mask = np.array([pid == pass_id for pid in pass_ids])
+    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_cameras)))
+    for i, cam_id in enumerate(unique_cameras):
+        mask = work["_camera_id"] == cam_id
         ax1.scatter(
-            ranges_m[mask],
-            centroid_x_px[mask],
+            work.loc[mask, "_range_m"],
+            work.loc[mask, "_centroid_x_residual_px"],
             c=[colors[i]],
-            label=pass_id,
+            label=_camera_label(cam_id),
             alpha=0.6,
             s=40,
         )
-    for i, pass_id in enumerate(unique_passes):
-        mask = np.array([pid == pass_id for pid in pass_ids])
+    for i, cam_id in enumerate(unique_cameras):
+        mask = work["_camera_id"] == cam_id
         ax2.scatter(
-            ranges_m[mask],
-            centroid_y_px[mask],
+            work.loc[mask, "_range_m"],
+            work.loc[mask, "_centroid_y_residual_px"],
             c=[colors[i]],
             alpha=0.6,
             s=40,
@@ -266,7 +376,7 @@ def plot_centroid_residuals_in_illumination_frame(
             y_vals,
             range_array,
             n_sigma=3.0,
-            fallback_sigma=centroid_1sigma_px,
+            fallback_sigma=sigma,
         )
         x_smooth, lower_smooth, upper_smooth = _smooth_prediction_bounds(
             range_array, lower, upper
@@ -280,9 +390,9 @@ def plot_centroid_residuals_in_illumination_frame(
     ax2.set_ylabel("Y Centroid Residual (pixels)\n(perpendicular to sun)", fontsize=11)
     ax2.set_xlabel("True Range (m)", fontsize=12)
     ax1.set_title(
-        f"{target_label} Centroid Residuals in Illumination Frame", fontsize=14
+        f"{target_label} Centroid Residuals in Illumination Frame by Camera", fontsize=14
     )
-    ax1.legend(loc="best", framealpha=0.9)
+    ax1.legend(loc="upper right", framealpha=0.9)
     plt.tight_layout()
     if save_path is not None:
         fig.savefig(save_path, dpi=300, bbox_inches="tight")

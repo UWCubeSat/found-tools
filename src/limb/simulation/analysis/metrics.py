@@ -33,7 +33,12 @@ def apparent_radius_pixels(
     float
         Apparent radius in pixels.
     """
-    distance = np.linalg.norm(position_camera)
+    # Ensure scalars so comparisons and division are unambiguous for downstream
+    position_camera = np.asarray(position_camera, dtype=np.float64).ravel()
+    if position_camera.size != 3:
+        raise ValueError("position_camera must have exactly 3 elements")
+    distance = float(np.linalg.norm(position_camera))
+    radius = float(radius)
     if distance <= radius:
         return np.nan
     # Image-plane semi-diameter = R/sqrt(d²-R²); pixel scale from calibration
@@ -72,15 +77,21 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
             df.at[idx, "true_y_centroid"] = py
             df.at[idx, "true_r_apparent"] = apparent_radius_pixels(rc, radius, camera)
 
-            # Check for 'out' position columns
-            out_pos = [row.get("out_pos_x"), row.get("out_pos_y"), row.get("out_pos_z")]
-            if all(pd.notna(val) for val in out_pos):
-                rc_out = tpc @ np.array(out_pos, dtype=np.float64)
-                camera_to_earth_origing_out = np.array([abs(rc_out[0]), -rc_out[1], -rc_out[2]], dtype=np.float64)
+            # Check for 'out' position columns (use float() so values are plain scalars)
+            out_x, out_y, out_z = row.get("out_pos_x"), row.get("out_pos_y"), row.get("out_pos_z")
+            if pd.notna(out_x) and pd.notna(out_y) and pd.notna(out_z):
+                out_vec = np.array(
+                    [float(out_x), float(out_y), float(out_z)],
+                    dtype=np.float64,
+                )
+                rc_out = np.ravel(np.asarray(tpc @ out_vec, dtype=np.float64))
+                camera_to_earth_origing_out = np.array(
+                    [abs(rc_out[0]), -rc_out[1], -rc_out[2]],
+                    dtype=np.float64,
+                )
                 ox, oy = camera.camera_to_pixel(camera_to_earth_origing_out)
-                
-                df.at[idx, "out_x_centroid"] = ox
-                df.at[idx, "out_y_centroid"] = oy
+                df.at[idx, "out_x_centroid"] = float(ox)
+                df.at[idx, "out_y_centroid"] = float(oy)
                 df.at[idx, "out_r_apparent"] = apparent_radius_pixels(
                     rc_out, radius, camera
                 )
