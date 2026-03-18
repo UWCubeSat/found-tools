@@ -51,8 +51,9 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
     For each row: transform satellite position (true and optionally out) to
     camera frame, project to pixel coordinates for the centroid, and compute
-    apparent radius (placeholder). out_x_centroid, out_y_centroid, out_r_apparent
-    are filled only when out_pos_x, out_pos_y, out_pos_z are all non-NaN.
+    apparent radius. out_x_centroid, out_y_centroid, out_r_apparent, and
+    position_distance_error_m are filled only when out_pos_x, out_pos_y, out_pos_z
+    are all non-NaN. position_distance_error_m = |‖true_pos‖ - ‖out_pos‖| (m).
 
     Parameters
     ----------
@@ -64,8 +65,12 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
     -------
     pd.DataFrame
         Same DataFrame with true_x_centroid, true_y_centroid, true_r_apparent
-        and (when out_pos_* present) out_x_centroid, out_y_centroid, out_r_apparent filled.
+        and (when out_pos_* present) out_x_centroid, out_y_centroid, out_r_apparent,
+        position_distance_error_m filled.
     """
+
+    if "position_distance_error_m" not in df.columns:
+        df["position_distance_error_m"] = np.nan
 
     for idx, row in df.iterrows():
             camera, _, tpc, rc = _row_to_pose(row)
@@ -94,6 +99,14 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
                 df.at[idx, "out_y_centroid"] = float(oy)
                 df.at[idx, "out_r_apparent"] = apparent_radius_pixels(
                     rc_out, radius, camera
+                )
+                # Absolute distance error (m): |‖true_pos‖ - ‖out_pos‖|
+                true_pos = np.array(
+                    [float(row["true_pos_x"]), float(row["true_pos_y"]), float(row["true_pos_z"])],
+                    dtype=np.float64,
+                )
+                df.at[idx, "position_distance_error_m"] = float(
+                    np.abs(np.linalg.norm(true_pos) - np.linalg.norm(out_vec))
                 )
 
     return df

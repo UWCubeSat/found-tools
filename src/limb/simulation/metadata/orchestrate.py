@@ -99,6 +99,8 @@ def initialize_sim_df() -> pd.DataFrame:
         "out_x_centroid": pd.Series(dtype="float64"),
         "out_y_centroid": pd.Series(dtype="float64"),
         "out_r_apparent": pd.Series(dtype="float64"),
+        # --- position error (m): |‖true_pos‖ - ‖out_pos‖|, filled when out_pos_* present ---
+        "position_distance_error_m": pd.Series(dtype="float64"),
     }
     return pd.DataFrame(columns=columns.keys())
 

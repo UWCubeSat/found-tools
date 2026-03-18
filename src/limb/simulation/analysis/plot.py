@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
+from scipy import stats
 
 from limb.simulation.analysis.metrics import fill_pixel_metrics
 
@@ -33,6 +34,134 @@ def _camera_label(cam_id: tuple[float, int, int]) -> str:
     """Human-readable label for legend."""
     f, wx, wy = cam_id
     return f"{wx}×{wy} f={f:.4g}"
+
+
+def _clumped_prediction_interval(
+    x: np.ndarray,
+    y: np.ndarray,
+    confidence: float = 0.997,
+    n_bins: Optional[int] = None,
+    fallback_sigma: Optional[float] = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute prediction interval per x-clump (bin), for data clumped at specific x values.
+
+    Bins x into n_bins; for each bin with data, computes mean(y) and a prediction
+    interval for a new observation at that x: mean ± t * std * sqrt(1 + 1/n),
+    where n is the count in the bin. Returns (x_centers, lower, upper) at bin centers
+    for bins that have at least one point. Then call _smooth_prediction_bounds to
+    fit a curve across the plot.
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    y = np.asarray(y, dtype=np.float64).ravel()
+    ok = np.isfinite(x) & np.isfinite(y)
+    if not np.any(ok):
+        return np.array([]), np.array([]), np.array([])
+    x, y = x[ok], y[ok]
+    n = len(x)
+    xmin, xmax = float(np.min(x)), float(np.max(x))
+    if n_bins is None:
+        n_bins = min(50, max(15, n // 3))
+    n_bins = max(2, int(n_bins))
+    global_std = float(np.nanstd(y)) if n > 1 else 0.0
+    if not np.isfinite(global_std) or global_std == 0:
+        global_std = 0.0
+    fallback = fallback_sigma if fallback_sigma is not None else global_std
+    if fallback is None:
+        fallback = 0.0
+    edges = np.linspace(xmin, xmax, n_bins + 1)
+    x_centers_list: list[float] = []
+    lower_list: list[float] = []
+    upper_list: list[float] = []
+    for i in range(n_bins):
+        lo, hi = edges[i], edges[i + 1]
+        in_bin = (x >= lo) & (x < hi) if i < n_bins - 1 else (x >= lo) & (x <= hi)
+        y_bin = y[in_bin]
+        n_bin = len(y_bin)
+        if n_bin == 0:
+            continue
+        mean_y = float(np.mean(y_bin))
+        std_y = float(np.std(y_bin))
+        if n_bin < 2 or std_y == 0 or not np.isfinite(std_y):
+            std_y = fallback
+        # Prediction interval for one new observation at this x: mean ± t * std * sqrt(1 + 1/n)
+        df = max(n_bin - 1, 1)
+        t_mult = stats.t.ppf(0.5 + confidence / 2.0, df)
+        se_pred = std_y * np.sqrt(1.0 + 1.0 / n_bin)
+        half = t_mult * se_pred
+        x_centers_list.append(0.5 * (lo + hi))
+        lower_list.append(mean_y - half)
+        upper_list.append(mean_y + half)
+    if not x_centers_list:
+        return np.array([]), np.array([]), np.array([])
+    return (
+        np.array(x_centers_list, dtype=np.float64),
+        np.array(lower_list, dtype=np.float64),
+        np.array(upper_list, dtype=np.float64),
+    )
+
+
+def _ridge_prediction_interval(
+    x: np.ndarray,
+    y: np.ndarray,
+    x_eval: np.ndarray,
+    confidence: float = 0.997,
+    degree: int = 5,
+    alpha: float = 1000.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Prediction interval for a new response using ridge regression (PSU STAT 501 style).
+
+    Uses the formula from
+    https://online.stat.psu.edu/stat501/lesson/3/3.3 :
+    PI = ŷ_h ± t_{1-α/2, n-p} × sqrt(MSE × (1 + leverage_h))
+    where MSE = SSE/(n-p), leverage_h = x_h'(X'X+αI)^{-1}x_h for ridge design at x_h.
+    Returns (x_eval, lower, upper) with symmetric interval around the fitted curve.
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    y = np.asarray(y, dtype=np.float64).ravel()
+    x_eval = np.asarray(x_eval, dtype=np.float64).ravel()
+    ok = np.isfinite(x) & np.isfinite(y)
+    if not np.any(ok):
+        y_mean = float(np.nanmean(y))
+        return x_eval, np.full_like(x_eval, y_mean), np.full_like(x_eval, y_mean)
+    x, y = x[ok], y[ok]
+    n = len(x)
+    xmin, xmax = float(np.min(x)), float(np.max(x))
+    if xmax <= xmin:
+        y_mean = float(np.mean(y))
+        return x_eval, np.full_like(x_eval, y_mean), np.full_like(x_eval, y_mean)
+    xn = (x - xmin) / (xmax - xmin)
+    xn_eval = np.clip((x_eval - xmin) / (xmax - xmin), 0.0, 1.0)
+    degree = min(degree, n - 1)
+    if degree < 0:
+        y_mean = float(np.mean(y))
+        return x_eval, np.full_like(x_eval, y_mean), np.full_like(x_eval, y_mean)
+    p = degree + 1
+    X = np.column_stack([xn**i for i in range(p)])
+    Xe = np.column_stack([xn_eval**i for i in range(p)])
+    gram = X.T @ X + alpha * np.eye(p)
+    try:
+        gram_inv = np.linalg.inv(gram)
+    except np.linalg.LinAlgError:
+        y_mean = float(np.mean(y))
+        return x_eval, np.full_like(x_eval, y_mean), np.full_like(x_eval, y_mean)
+    coef = gram_inv @ (X.T @ y)
+    y_fit = X @ coef
+    residuals = y - y_fit
+    sse = float(np.sum(residuals**2))
+    mse = sse / max(n - p, 1)
+    if mse <= 0 or not np.isfinite(mse):
+        mse = 0.0
+    # Leverage at evaluation points: row_h (X'X+αI)^{-1} row_h'
+    levers = np.einsum("ij,jk,ik->i", Xe, gram_inv, Xe)
+    levers = np.maximum(levers, 0.0)
+    se_pred = np.sqrt(mse * (1.0 + levers))
+    y_eval = Xe @ coef
+    df = max(n - p, 1)
+    t_mult = stats.t.ppf(0.5 + confidence / 2.0, df)
+    half = t_mult * se_pred
+    lower = y_eval - half
+    upper = y_eval + half
+    return x_eval, lower, upper
 
 
 def _ridge_fit_curve(
@@ -85,6 +214,7 @@ def _smooth_prediction_bounds(
     n_fine: int = 500,
     degree: int = 5,
     alpha: float = 1000.0,
+    x_fine: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fit prediction interval bounds with ridge regression; return symmetric band on a fine grid.
 
@@ -100,8 +230,12 @@ def _smooth_prediction_bounds(
       Equivalent to center + half-width with post-fit center/half_width.
 
     We use center + half-width so the band is symmetric by construction.
+    If x_fine is provided, the curve is evaluated on it; otherwise linspace(x.min(), x.max(), n_fine).
     """
-    x_fine = np.linspace(float(x.min()), float(x.max()), n_fine)
+    if x_fine is not None:
+        x_fine = np.asarray(x_fine, dtype=np.float64).ravel()
+    else:
+        x_fine = np.linspace(float(x.min()), float(x.max()), n_fine)
     center = (lower + upper) / 2.0
     half_width = np.maximum((upper - lower) / 2.0, 0.0)
     center_smooth = _ridge_fit_curve(x, center, x_fine, degree=degree, alpha=alpha)
@@ -306,20 +440,21 @@ def plot_radius_residuals_vs_range(
             alpha=0.6,
             s=40,
         )
-    range_array = np.linspace(ranges_m.min(), ranges_m.max(), 100)
-    lower, upper = _prediction_interval_bounds(
-        ranges_m,
-        radius_residuals_px,
-        range_array,
-        n_sigma=3.0,
-        fallback_sigma=sigma,
+    x_fine = np.linspace(ranges_m.min(), ranges_m.max(), 500)
+    x_centers, lower_b, upper_b = _clumped_prediction_interval(
+        ranges_m, radius_residuals_px, confidence=0.997, fallback_sigma=sigma
     )
-    x_smooth, lower_smooth, upper_smooth = _smooth_prediction_bounds(
-        range_array, lower, upper
-    )
-    ax.fill_between(x_smooth, lower_smooth, upper_smooth, alpha=0.15, color="gray", label="99.7% prediction interval")
-    ax.plot(x_smooth, upper_smooth, "k--", linewidth=1.5)
-    ax.plot(x_smooth, lower_smooth, "k--", linewidth=1.5)
+    if len(x_centers) > 0:
+        x_fine, lower_smooth, upper_smooth = _smooth_prediction_bounds(
+            x_centers, lower_b, upper_b, x_fine=x_fine
+        )
+    else:
+        x_fine, lower_smooth, upper_smooth = _ridge_prediction_interval(
+            ranges_m, radius_residuals_px, x_fine, confidence=0.997
+        )
+    ax.fill_between(x_fine, lower_smooth, upper_smooth, alpha=0.15, color="gray", label="99.7% prediction interval")
+    ax.plot(x_fine, upper_smooth, "k--", linewidth=1.5)
+    ax.plot(x_fine, lower_smooth, "k--", linewidth=1.5)
     ax.axhline(0, color="k", linestyle="-", linewidth=0.5, alpha=0.5)
     ax.set_xlabel("True Range (m)", fontsize=12)
     ax.set_ylabel("Radius Residual (pixels)", fontsize=12)
@@ -399,31 +534,32 @@ def plot_centroid_residuals_in_illumination_frame(
             alpha=0.6,
             s=40,
         )
-    range_array = np.linspace(ranges_m.min(), ranges_m.max(), 100)
+    x_fine = np.linspace(ranges_m.min(), ranges_m.max(), 500)
     for ax, y_vals, label in (
         (ax1, centroid_x_px, "99.7% prediction interval"),
         (ax2, centroid_y_px, "99.7% prediction interval"),
     ):
-        lower, upper = _prediction_interval_bounds(
-            ranges_m,
-            y_vals,
-            range_array,
-            n_sigma=3.0,
-            fallback_sigma=sigma,
+        x_centers, lower_b, upper_b = _clumped_prediction_interval(
+            ranges_m, y_vals, confidence=0.997, fallback_sigma=sigma
         )
-        x_smooth, lower_smooth, upper_smooth = _smooth_prediction_bounds(
-            range_array, lower, upper
-        )
-        ax.fill_between(x_smooth, lower_smooth, upper_smooth, alpha=0.15, color="gray", label=label)
-        ax.plot(x_smooth, upper_smooth, "k--", linewidth=1.5)
-        ax.plot(x_smooth, lower_smooth, "k--", linewidth=1.5)
+        if len(x_centers) > 0:
+            x_plot, lower_smooth, upper_smooth = _smooth_prediction_bounds(
+                x_centers, lower_b, upper_b, x_fine=x_fine
+            )
+        else:
+            x_plot, lower_smooth, upper_smooth = _ridge_prediction_interval(
+                ranges_m, y_vals, x_fine, confidence=0.997
+            )
+        ax.fill_between(x_plot, lower_smooth, upper_smooth, alpha=0.15, color="gray", label=label)
+        ax.plot(x_fine, upper_smooth, "k--", linewidth=1.5)
+        ax.plot(x_fine, lower_smooth, "k--", linewidth=1.5)
         ax.axhline(0, color="k", linestyle="-", linewidth=0.5, alpha=0.5)
         ax.grid(True, alpha=0.3)
-    ax1.set_ylabel("X Centroid Residual (pixels)\n(along sun direction)", fontsize=11)
-    ax2.set_ylabel("Y Centroid Residual (pixels)\n(perpendicular to sun)", fontsize=11)
+    ax1.set_ylabel("X Centroid Residual (pixels)", fontsize=11)
+    ax2.set_ylabel("Y Centroid Residual (pixels)", fontsize=11)
     ax2.set_xlabel("True Range (m)", fontsize=12)
     ax1.set_title(
-        f"{target_label} Centroid Residuals in Illumination Frame by Camera", fontsize=14
+        f"{target_label} Centroid Residuals in Camera Frame", fontsize=14
     )
     ax1.legend(loc="upper right", framealpha=0.9)
     plt.tight_layout()
