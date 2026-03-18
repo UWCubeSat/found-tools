@@ -4,12 +4,13 @@ import numpy as np
 import pandas as pd
 
 from limb.simulation.metadata.orchestrate import _row_to_pose
+from limb.utils._camera import Camera
 
 
 def apparent_radius_pixels(
     position_camera: np.ndarray,
     radius: float,
-    calibration_matrix: np.ndarray,
+    camera: Camera,
 ) -> float:
     """Compute apparent limb radius in pixels (sphere on optical axis).
 
@@ -22,8 +23,8 @@ def apparent_radius_pixels(
     ----------
     position_camera : np.ndarray
         Shape (3,) – satellite/body center in camera frame (m). Optical axis is x.
-    shape_matrix : np.ndarray
-        Shape (3, 3) – ellipsoid shape matrix (diag 1/a², 1/b², 1/c²). For sphere, R=1/√S[0,0].
+    radius : float
+        Body semi-axis (m) used for apparent size; e.g. shape_axis_a for a sphere.
     calibration_matrix : np.ndarray
         Shape (3, 3) – camera calibration matrix; fx = -cal[0,1] gives image→pixel scale.
 
@@ -32,13 +33,12 @@ def apparent_radius_pixels(
     float
         Apparent radius in pixels.
     """
-    d = np.linalg.norm(position_camera)
-    if d <= radius:
+    distance = np.linalg.norm(position_camera)
+    if distance <= radius:
         return np.nan
     # Image-plane semi-diameter = R/sqrt(d²-R²); pixel scale from calibration
-    fx = -calibration_matrix[0, 1]
-    image_plane_radius = radius / np.sqrt(d * d - radius * radius)
-    return float(fx * image_plane_radius)
+    fx = camera.focal_length / camera.x_pixel_pitch
+    return float(radius / distance * fx)
 
 
 def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
@@ -61,43 +61,28 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
         Same DataFrame with true_x_centroid, true_y_centroid, true_r_apparent
         and (when out_pos_* present) out_x_centroid, out_y_centroid, out_r_apparent filled.
     """
-    out = df.copy()
-    n = len(out)
-    true_x = np.full(n, np.nan, dtype=np.float64)
-    true_y = np.full(n, np.nan, dtype=np.float64)
-    true_r = np.full(n, np.nan, dtype=np.float64)
-    out_x = np.full(n, np.nan, dtype=np.float64)
-    out_y = np.full(n, np.nan, dtype=np.float64)
-    out_r = np.full(n, np.nan, dtype=np.float64)
-    radius = df["shape_axis_a"]
 
-    for i, (_, row) in enumerate(out.iterrows()):
-        camera, shape_matrix, tpc, rc = _row_to_pose(row)
-        if rc[0] > 0:
-            px, py = camera.camera_to_pixel(rc)
-            true_x[i] = px
-            true_y[i] = py
-            true_r[i] = apparent_radius_pixels(
-                rc, shape_matrix, camera.calibration_matrix
-            )
+    for idx, row in df.iterrows():
+            camera, _, tpc, rc = _row_to_pose(row)
+            radius = float(row["shape_axis_a"])
+            camera_to_earth_origing = np.array([abs(rc[0]), -rc[1], -rc[2]], dtype=np.float64)
+            # Calculate true metrics
+            px, py = camera.camera_to_pixel(camera_to_earth_origing)
+            df.at[idx, "true_x_centroid"] = px
+            df.at[idx, "true_y_centroid"] = py
+            df.at[idx, "true_r_apparent"] = apparent_radius_pixels(rc, radius, camera)
 
-        out_pos_x = row.get("out_pos_x")
-        out_pos_y = row.get("out_pos_y")
-        out_pos_z = row.get("out_pos_z")
-        if pd.notna(out_pos_x) and pd.notna(out_pos_y) and pd.notna(out_pos_z):
-            rc_out = tpc @ np.array([out_pos_x, out_pos_y, out_pos_z], dtype=np.float64)
-            if rc_out[0] > 0:
-                ox, oy = camera.camera_to_pixel(rc_out)
-                out_x[i] = ox
-                out_y[i] = oy
-                out_r[i] = apparent_radius_pixels(
-                    rc_out, radius, camera.calibration_matrix
+            # Check for 'out' position columns
+            out_pos = [row.get("out_pos_x"), row.get("out_pos_y"), row.get("out_pos_z")]
+            if all(pd.notna(val) for val in out_pos):
+                rc_out = tpc @ np.array(out_pos, dtype=np.float64)
+                camera_to_earth_origing_out = np.array([abs(rc_out[0]), -rc_out[1], -rc_out[2]], dtype=np.float64)
+                ox, oy = camera.camera_to_pixel(camera_to_earth_origing_out)
+                
+                df.at[idx, "out_x_centroid"] = ox
+                df.at[idx, "out_y_centroid"] = oy
+                df.at[idx, "out_r_apparent"] = apparent_radius_pixels(
+                    rc_out, radius, camera
                 )
 
-    out["true_x_centroid"] = true_x
-    out["true_y_centroid"] = true_y
-    out["true_r_apparent"] = true_r
-    out["out_x_centroid"] = out_x
-    out["out_y_centroid"] = out_y
-    out["out_r_apparent"] = out_r
-    return out
+    return df

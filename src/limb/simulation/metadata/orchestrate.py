@@ -66,10 +66,10 @@ def initialize_sim_df() -> pd.DataFrame:
         "true_pos_x": pd.Series(dtype="float64"),
         "true_pos_y": pd.Series(dtype="float64"),
         "true_pos_z": pd.Series(dtype="float64"),
+        "qw": pd.Series(dtype="float64"),
         "qx": pd.Series(dtype="float64"),
         "qy": pd.Series(dtype="float64"),
         "qz": pd.Series(dtype="float64"),
-        "qw": pd.Series(dtype="float64"),
         # --- planet model ---
         "shape_axis_a": pd.Series(dtype="float64"),
         "shape_axis_b": pd.Series(dtype="float64"),
@@ -294,6 +294,7 @@ def setup_expirement(
 
     for tcp, sat_pos in zip(tcps, sat_positions):
         quat = R.from_matrix(tcp).as_quat()  # scipy order: x, y, z, w
+        # tcp_new = R.from_quat(quat).as_matrix()
         df = _fill_setup(
             df=df,
             camera=camera,
@@ -301,6 +302,7 @@ def setup_expirement(
             semi_axes=semi_axes,
             quat=quat,
         )
+    
 
     return df
 

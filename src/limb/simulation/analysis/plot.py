@@ -12,6 +12,66 @@ from typing import Optional
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
+from scipy.interpolate import CubicSpline
+
+
+def _smooth_prediction_bounds(
+    x: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    n_fine: int = 500,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Interpolate prediction interval bounds as smooth curves on a finer grid."""
+    cs_low = CubicSpline(x, lower)
+    cs_upp = CubicSpline(x, upper)
+    x_fine = np.linspace(float(x.min()), float(x.max()), n_fine)
+    return x_fine, cs_low(x_fine), cs_upp(x_fine)
+
+
+def _prediction_interval_bounds(
+    x: np.ndarray,
+    y: np.ndarray,
+    x_grid: np.ndarray,
+    n_sigma: float,
+    min_points: int = 5,
+    fallback_sigma: Optional[float] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute prediction interval upper/lower curves vs x via local std.
+
+    For each x_grid value, take y values whose x is in a neighborhood (adaptive
+    half-window), compute mean and std, then lower = mean - n_sigma*std,
+    upper = mean + n_sigma*std. If a neighborhood has fewer than min_points,
+    use fallback_sigma for the half-width (or global std if fallback_sigma is None).
+
+    Returns:
+        lower, upper: arrays same shape as x_grid.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    x_grid = np.asarray(x_grid, dtype=np.float64)
+    x_range = np.ptp(x)
+    half_window = max(x_range / 20.0, 1.0) if x_range > 0 else 1.0
+    lower = np.full_like(x_grid, np.nan)
+    upper = np.full_like(x_grid, np.nan)
+    global_std = None if fallback_sigma is not None else np.nanstd(y)
+    if global_std is not None and (not np.isfinite(global_std) or global_std == 0):
+        global_std = 0.0
+    for i, x0 in enumerate(x_grid):
+        in_window = np.abs(x - x0) <= half_window
+        sigma = fallback_sigma if fallback_sigma is not None else global_std
+        if sigma is None:
+            sigma = 0.0
+        if np.sum(in_window) >= min_points:
+            mu = np.mean(y[in_window])
+            s = np.std(y[in_window])
+            if s == 0 or not np.isfinite(s):
+                s = sigma
+            lower[i] = mu - n_sigma * s
+            upper[i] = mu + n_sigma * s
+        else:
+            lower[i] = -n_sigma * sigma
+            upper[i] = n_sigma * sigma
+    return lower, upper
 
 
 def edge_plot(
@@ -113,11 +173,12 @@ def plot_radius_residuals_vs_range(
     target_label: str = "Moon",
     save_path: Optional[Path | str] = None,
 ):
-    """Plot radius residuals (pixels) vs true range (m) for all passes with 3σ bounds.
+    """Plot radius residuals (pixels) vs true range (m) with 99.7% prediction interval.
 
     X-axis: true range (meters). Y-axis: radius residual (pixels). Multiple passes
-    are plotted with distinct colors; 3σ error bounds are drawn from the given
-    sigma.
+    are plotted with distinct colors. The band is a range-dependent 3σ prediction
+    interval (local std estimated in range windows; fallback to given sigma where
+    data are sparse).
     """
     unique_passes = sorted(set(pass_ids))
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -133,16 +194,19 @@ def plot_radius_residuals_vs_range(
             s=40,
         )
     range_array = np.linspace(ranges_m.min(), ranges_m.max(), 100)
-    sigma = radius_1sigma_px
-    ax.plot(
+    lower, upper = _prediction_interval_bounds(
+        ranges_m,
+        radius_residuals_px,
         range_array,
-        3 * sigma * np.ones_like(range_array),
-        "k--",
-        linewidth=2,
-        label="3σ bounds",
+        n_sigma=3.0,
+        fallback_sigma=radius_1sigma_px,
     )
-    ax.plot(range_array, -3 * sigma * np.ones_like(range_array), "k--", linewidth=2)
-    ax.fill_between(range_array, -3 * sigma, 3 * sigma, alpha=0.1, color="gray")
+    x_smooth, lower_smooth, upper_smooth = _smooth_prediction_bounds(
+        range_array, lower, upper
+    )
+    ax.fill_between(x_smooth, lower_smooth, upper_smooth, alpha=0.15, color="gray", label="99.7% prediction interval")
+    ax.plot(x_smooth, upper_smooth, "k--", linewidth=1.5)
+    ax.plot(x_smooth, lower_smooth, "k--", linewidth=1.5)
     ax.axhline(0, color="k", linestyle="-", linewidth=0.5, alpha=0.5)
     ax.set_xlabel("True Range (m)", fontsize=12)
     ax.set_ylabel("Radius Residual (pixels)", fontsize=12)
@@ -166,8 +230,9 @@ def plot_centroid_residuals_in_illumination_frame(
 ):
     """Plot X and Y centroid residuals (illumination frame) vs true range (m).
 
-    Two subplots: X along sun direction, Y perpendicular to sun. 3σ bounds are
-    drawn from the given sigma.
+    Two subplots: X along sun direction, Y perpendicular to sun. Each subplot
+    shows a range-dependent 99.7% prediction interval (local std in range
+    windows; fallback to given sigma where data are sparse).
     """
     unique_passes = sorted(set(pass_ids))
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
@@ -191,17 +256,24 @@ def plot_centroid_residuals_in_illumination_frame(
             alpha=0.6,
             s=40,
         )
-    sigma = centroid_1sigma_px
-    for ax in (ax1, ax2):
-        ax.axhline(3 * sigma, color="k", linestyle="--", linewidth=2)
-        ax.axhline(-3 * sigma, color="k", linestyle="--", linewidth=2)
-        ax.fill_between(
-            [ranges_m.min(), ranges_m.max()],
-            -3 * sigma,
-            3 * sigma,
-            alpha=0.1,
-            color="gray",
+    range_array = np.linspace(ranges_m.min(), ranges_m.max(), 100)
+    for ax, y_vals, label in (
+        (ax1, centroid_x_px, "99.7% prediction interval"),
+        (ax2, centroid_y_px, "99.7% prediction interval"),
+    ):
+        lower, upper = _prediction_interval_bounds(
+            ranges_m,
+            y_vals,
+            range_array,
+            n_sigma=3.0,
+            fallback_sigma=centroid_1sigma_px,
         )
+        x_smooth, lower_smooth, upper_smooth = _smooth_prediction_bounds(
+            range_array, lower, upper
+        )
+        ax.fill_between(x_smooth, lower_smooth, upper_smooth, alpha=0.15, color="gray", label=label)
+        ax.plot(x_smooth, upper_smooth, "k--", linewidth=1.5)
+        ax.plot(x_smooth, lower_smooth, "k--", linewidth=1.5)
         ax.axhline(0, color="k", linestyle="-", linewidth=0.5, alpha=0.5)
         ax.grid(True, alpha=0.3)
     ax1.set_ylabel("X Centroid Residual (pixels)\n(along sun direction)", fontsize=11)
