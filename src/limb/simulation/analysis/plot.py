@@ -14,11 +14,16 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
 from scipy import stats
+from scipy.spatial import cKDTree
 
 from limb.simulation.analysis.metrics import fill_pixel_metrics
 
 # Columns used for camera identity (must be present in df)
 _CAMERA_KEY_COLS = ("cam_focal_length", "cam_x_resolution", "cam_y_resolution")
+
+# When point count exceeds these, show density underlay and/or subsample scatter for clarity
+_HEXBIN_MIN_POINTS = 800
+_MAX_SCATTER_POINTS = 3500
 
 
 def _camera_id_from_row(row: pd.Series) -> tuple[float, int, int]:
@@ -34,6 +39,55 @@ def _camera_label(cam_id: tuple[float, int, int]) -> str:
     """Human-readable label for legend."""
     f, wx, wy = cam_id
     return f"{wx}×{wy} f={f:.4g}"
+
+
+def _density_scaled_sizes(
+    x: np.ndarray,
+    y: Optional[np.ndarray] = None,
+    base_size: float = 40.0,
+    min_size: float = 1.0,
+    max_size: float = 100.0,
+    k: int = 50,
+) -> np.ndarray:
+    """Scale point sizes inversely with local density so 100k+ points remain interpretable.
+
+    For each point, computes distance to k-th nearest neighbor (in x, or in (x,y) if y
+    given). Size is proportional to that distance (sparse => larger, dense => smaller),
+    normalized by the median distance and clamped to [min_size, max_size].
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    n = len(x)
+    if n == 0:
+        return np.array([])
+    if y is not None:
+        y = np.asarray(y, dtype=np.float64).ravel()
+        if len(y) != n:
+            y = None
+    k = min(k, n - 1)
+    if k < 1:
+        return np.full(n, base_size)
+    # Stack (x,) or (x, y) for distance
+    if y is not None:
+        xy = np.column_stack([x, y])
+        # Scale y to similar range as x for distance
+        xr = np.ptp(x)
+        yr = np.ptp(y)
+        if yr > 0 and xr > 0:
+            xy = np.column_stack([x, y * (xr / yr)])
+        pts = xy
+    else:
+        pts = x.reshape(-1, 1)
+    # k+1 because the first neighbor is self (distance 0)
+    tree = cKDTree(pts)
+    d_k, _ = tree.query(pts, k=k + 1)
+    dist_k = d_k[:, -1]
+    d_median = np.median(dist_k)
+    if d_median <= 0 or not np.isfinite(d_median):
+        return np.full(n, base_size)
+    # size proportional to distance; normalize so median point gets base_size
+    raw = base_size * (dist_k / d_median)
+    sizes = np.clip(raw, min_size, max_size)
+    return np.asarray(sizes, dtype=np.float64)
 
 
 def _clumped_prediction_interval(
@@ -427,18 +481,39 @@ def plot_radius_residuals_vs_range(
     if sigma is None or not np.isfinite(sigma):
         sigma = float(np.nanstd(radius_residuals_px)) or 1.0
 
+    # Scale point size by local density (in x = range) so dense stacks get small points
+    work["_size"] = _density_scaled_sizes(
+        ranges_m, None,
+        base_size=40.0, min_size=1.0, max_size=100.0,
+        k=min(50, len(work) - 1),
+    )
+    n_pts = len(work)
+    show = np.ones(n_pts, dtype=bool)
+    if n_pts > _MAX_SCATTER_POINTS:
+        rng = np.random.default_rng(42)
+        show = np.zeros(n_pts, dtype=bool)
+        show[rng.choice(n_pts, size=_MAX_SCATTER_POINTS, replace=False)] = True
     unique_cameras = sorted(set(work["_camera_id"]))
     fig, ax = plt.subplots(figsize=(10, 6))
+    if n_pts >= _HEXBIN_MIN_POINTS:
+        hb = ax.hexbin(
+            ranges_m, radius_residuals_px,
+            gridsize=min(50, max(20, n_pts // 200)),
+            mincnt=1, cmap="Blues", alpha=0.45, edgecolors="none",
+        )
     colors = plt.cm.tab10(np.linspace(0, 1, len(unique_cameras)))
     for i, cam_id in enumerate(unique_cameras):
-        mask = work["_camera_id"] == cam_id
+        mask = (work["_camera_id"] == cam_id) & show
+        if not np.any(mask):
+            continue
         ax.scatter(
             work.loc[mask, "_range_m"],
             work.loc[mask, "_radius_residual_px"],
             c=[colors[i]],
             label=_camera_label(cam_id),
             alpha=0.6,
-            s=40,
+            s=work.loc[mask, "_size"],
+            marker="s",
         )
     x_fine = np.linspace(ranges_m.min(), ranges_m.max(), 500)
     x_centers, lower_b, upper_b = _clumped_prediction_interval(
@@ -512,27 +587,57 @@ def plot_centroid_residuals_in_illumination_frame(
     if sigma is None or not np.isfinite(sigma):
         sigma = float(np.nanstd(np.concatenate([centroid_x_px, centroid_y_px]))) or 1.0
 
+    # Scale point size by local density (in x = range) so dense stacks get small points
+    k_nn = min(50, len(work) - 1)
+    size_arr = _density_scaled_sizes(
+        ranges_m, None, base_size=40.0, min_size=1.0, max_size=100.0, k=k_nn
+    )
+    work["_size_x"] = size_arr
+    work["_size_y"] = size_arr
+    n_pts = len(work)
+    show = np.ones(n_pts, dtype=bool)
+    if n_pts > _MAX_SCATTER_POINTS:
+        rng = np.random.default_rng(42)
+        show = np.zeros(n_pts, dtype=bool)
+        show[rng.choice(n_pts, size=_MAX_SCATTER_POINTS, replace=False)] = True
     unique_cameras = sorted(set(work["_camera_id"]))
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+    for ax, y_col, size_col in (
+        (ax1, "_centroid_x_residual_px", "_size_x"),
+        (ax2, "_centroid_y_residual_px", "_size_y"),
+    ):
+        if n_pts >= _HEXBIN_MIN_POINTS:
+            y_vals = work[y_col].values
+            ax.hexbin(
+                ranges_m, y_vals,
+                gridsize=min(50, max(20, n_pts // 200)),
+                mincnt=1, cmap="Blues", alpha=0.45, edgecolors="none",
+            )
     colors = plt.cm.tab10(np.linspace(0, 1, len(unique_cameras)))
     for i, cam_id in enumerate(unique_cameras):
-        mask = work["_camera_id"] == cam_id
+        mask = (work["_camera_id"] == cam_id) & show
+        if not np.any(mask):
+            continue
         ax1.scatter(
             work.loc[mask, "_range_m"],
             work.loc[mask, "_centroid_x_residual_px"],
             c=[colors[i]],
             label=_camera_label(cam_id),
             alpha=0.6,
-            s=40,
+            s=work.loc[mask, "_size_x"],
+            marker="s",
         )
     for i, cam_id in enumerate(unique_cameras):
-        mask = work["_camera_id"] == cam_id
+        mask = (work["_camera_id"] == cam_id) & show
+        if not np.any(mask):
+            continue
         ax2.scatter(
             work.loc[mask, "_range_m"],
             work.loc[mask, "_centroid_y_residual_px"],
             c=[colors[i]],
             alpha=0.6,
-            s=40,
+            s=work.loc[mask, "_size_y"],
+            marker="s",
         )
     x_fine = np.linspace(ranges_m.min(), ranges_m.max(), 500)
     for ax, y_vals, label in (
