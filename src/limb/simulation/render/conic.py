@@ -163,6 +163,7 @@ def process_simulation(
             upper = min(i + batch_size, n_total)
             batch_coeffs = coeffs_nx6[i:upper].to(device)
             batch_K = K[i:upper].to(device)
+            # Slice the original rc parameter and keep a separate batched view variable
             batch_rc = rc[i:upper].to(device)
 
             A = batch_coeffs[:, 0].view(-1, 1, 1)
@@ -175,8 +176,8 @@ def process_simulation(
 
             calibrationy = batch_K[:, :, 1].view(-1, 3, 1, 1)
             calibrationz = batch_K[:, :, 2].view(-1, 3, 1, 1)
-            # rc: camera position in camera frame (batch, 3, 1, 1), same role as rc in edge/conic
-            rc = batch_rc.view(-1, 3, 1, 1)
+            # rc_batched: camera position in camera frame (batch, 3, 1, 1), same role as rc in edge/conic
+            rc_batched = batch_rc.view(-1, 3, 1, 1)
 
             with torch.no_grad():
                 Q = (
@@ -187,9 +188,9 @@ def process_simulation(
                     + E * grid_y
                     + F
                 )
-                # Visible arc: keep points where dot(ray, -rc) >= 0 (same as edge/conic)
+                # Visible arc mask: dot(ray, rc) > 0 means wrong side (consistent with edge logic)
                 pixel_vec = calibrationx * grid_x + calibrationy * grid_y + calibrationz
-                wrong_side_mask = (pixel_vec * -rc).sum(dim=1) > 0
+                wrong_side_mask = (pixel_vec * rc_batched).sum(dim=1) > 0
                 
                 # 2. Gradient for Taubin Distance
                 gx = 2 * A * grid_x + B * grid_y + D

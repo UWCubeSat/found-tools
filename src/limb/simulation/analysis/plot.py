@@ -86,10 +86,29 @@ def _smooth_prediction_bounds(
     degree: int = 5,
     alpha: float = 1000.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Fit prediction interval bounds with ridge regression (polynomial) and evaluate on a fine grid."""
+    """Fit prediction interval bounds with ridge regression; return symmetric band on a fine grid.
+
+    Strategies for symmetry (we use center + half-width):
+    - Center + half-width: From (lower, upper) compute center = (lower+upper)/2 and
+      half_width = (upper-lower)/2; fit ridge to center and to half_width; then
+      lower_smooth = center_smooth - half_width_smooth, upper_smooth = center_smooth + half_width_smooth.
+      Guarantees a symmetric band.
+    - Fit mean and std in k-NN, then smooth: Have _prediction_interval_bounds return (mean, std);
+      fit center_smooth = ridge(mean), half_width_smooth = ridge(n_sigma*std); same result conceptually.
+    - Fit lower and upper then symmetrize: Fit ridge to lower and upper; set center = (lower_smooth+upper_smooth)/2,
+      half_width = abs(upper_smooth - lower_smooth)/2; then redefine lower/upper as center ± half_width.
+      Equivalent to center + half-width with post-fit center/half_width.
+
+    We use center + half-width so the band is symmetric by construction.
+    """
     x_fine = np.linspace(float(x.min()), float(x.max()), n_fine)
-    lower_smooth = _ridge_fit_curve(x, lower, x_fine, degree=degree, alpha=alpha)
-    upper_smooth = _ridge_fit_curve(x, upper, x_fine, degree=degree, alpha=alpha)
+    center = (lower + upper) / 2.0
+    half_width = np.maximum((upper - lower) / 2.0, 0.0)
+    center_smooth = _ridge_fit_curve(x, center, x_fine, degree=degree, alpha=alpha)
+    half_width_smooth = _ridge_fit_curve(x, half_width, x_fine, degree=degree, alpha=alpha)
+    half_width_smooth = np.maximum(half_width_smooth, 0.0)
+    lower_smooth = center_smooth - half_width_smooth
+    upper_smooth = center_smooth + half_width_smooth
     return x_fine, lower_smooth, upper_smooth
 
 
