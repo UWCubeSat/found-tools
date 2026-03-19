@@ -271,11 +271,14 @@ def plot_column_summary(
     pad = 0.05 * (x_max - x_min) if x_max > x_min else 1.0
     x_curve = np.linspace(x_min, x_max, 200)
 
-    def _fit_softplus(x: np.ndarray, y: np.ndarray, sig: np.ndarray) -> tuple[float, float, float, float]:
-        """Return (beta, m, b, L) for softplus; on failure fall back to constant (L, β=1, m=0, b=0)."""
+    def _fit_softplus(
+        x: np.ndarray, y: np.ndarray, sig: np.ndarray
+    ) -> tuple[bool, np.ndarray]:
+        """Try softplus; on failure use degree-2 polynomial. Returns (ok_softplus, params)."""
+        w_poly = 1.0 / (sig.astype(np.float64) ** 2)
         if len(x) < 4:
-            return 1.0, 0.0, 0.0, float(np.mean(y))
-        # Initial L ≈ floor (min), m,b from linear trend, β = moderate sharpness
+            coeff = np.polyfit(x, y, min(2, len(x)), w=w_poly)
+            return False, coeff
         L0 = float(np.min(y))
         if x_span > 0:
             m0 = float((y[-1] - y[0]) / x_span) if len(y) > 1 else 0.0
@@ -292,14 +295,20 @@ def plot_column_summary(
                 sigma=sig,
                 bounds=([1e-6, -np.inf, -np.inf, -np.inf], [100.0, np.inf, np.inf, np.inf]),
             )
-            return float(beta), float(m), float(b), float(L)
+            return True, np.array([float(beta), float(m), float(b), float(L)])
         except (ValueError, RuntimeError):
-            return 1.0, 0.0, 0.0, float(np.mean(y))
+            coeff = np.polyfit(x, y, 2, w=w_poly)
+            return False, coeff
 
-    params_center = _fit_softplus(x_sorted, center, sigma)
-    params_hw = _fit_softplus(x_sorted, half_width, sigma)
-    center_curve = _softplus(x_curve, *params_center)
-    hw_curve = np.maximum(_softplus(x_curve, *params_hw), 0.0)
+    def _eval_fit(ok_softplus: bool, params: np.ndarray, x_eval: np.ndarray) -> np.ndarray:
+        if ok_softplus:
+            return _softplus(x_eval, *params)
+        return np.polyval(params, x_eval)
+
+    ok_center, params_center = _fit_softplus(x_sorted, center, sigma)
+    ok_hw, params_hw = _fit_softplus(x_sorted, half_width, sigma)
+    center_curve = _eval_fit(ok_center, params_center, x_curve)
+    hw_curve = np.maximum(_eval_fit(ok_hw, params_hw, x_curve), 0.0)
     ax.plot(
         x_curve,
         center_curve - hw_curve,
