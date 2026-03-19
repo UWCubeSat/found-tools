@@ -7,9 +7,13 @@ a plot of a chosen column vs distance with prediction intervals.
 from pathlib import Path
 
 import pandas as pd
+from matplotlib import pyplot as plt
 
 from limb.simulation.analysis.metrics import column_summary, fill_pixel_metrics
-from limb.simulation.analysis.plot import plot_column_summary
+from limb.simulation.analysis.plot import (
+    plot_column_summary,
+    plot_column_summary_by_camera,
+)
 
 
 def main() -> None:
@@ -49,6 +53,37 @@ def main() -> None:
         save_path=save_path,
         raw_intervals=False,
     )
+
+    by_cam_path = out_dir / "column_summary_by_camera_points.png"
+    print(f"\nMulti-camera bin means (points) → {by_cam_path}")
+    fig2 = plot_column_summary_by_camera(
+        df,
+        column,
+        use_fit_line=False,
+        n_bins=10,
+        confidence=0.99,
+        title=None,
+        xlabel="Range (m)",
+        ylabel=None,
+        save_path=by_cam_path,
+    )
+    plt.close(fig2)
+
+    by_cam_fit_path = out_dir / "column_summary_by_camera_fit.png"
+    print(f"Multi-camera linear fit → {by_cam_fit_path}")
+    fig3 = plot_column_summary_by_camera(
+        df,
+        column,
+        use_fit_line=True,
+        n_bins=10,
+        confidence=0.99,
+        title="Per-camera linear fit to bin means",
+        xlabel="Range (m)",
+        ylabel=None,
+        save_path=by_cam_fit_path,
+    )
+    plt.close(fig3)
+
     print("Done.")
 
 
