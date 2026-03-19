@@ -47,6 +47,7 @@ def main() -> None:
         n_bins=10,
         confidence=0.99,
         save_path=save_path,
+        raw_intervals=False,
     )
     print("Done.")
 

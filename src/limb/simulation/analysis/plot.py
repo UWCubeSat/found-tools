@@ -148,6 +148,7 @@ def plot_column_summary(
     n_bins: int = 10,
     confidence: float = 0.95,
     distance_column: str | None = None,
+    raw_intervals: bool = False,
     ax: Optional[plt.Axes] = None,
     save_path: str | Path | None = None,
 ) -> plt.Figure:
@@ -155,7 +156,7 @@ def plot_column_summary(
 
     Uses :func:`~limb.simulation.analysis.metrics.column_summary` to compute
     per-distance-clump stats, then plots: (1) raw data downsampled to ``n_points``
-    as tiny squares, (2) prediction interval (errorbar) per clump.
+    as tiny squares, (2) prediction interval bounds (smooth fit or raw per-bin).
 
     Parameters
     ----------
@@ -179,6 +180,10 @@ def plot_column_summary(
         Prediction interval confidence level. Default 0.95.
     distance_column : str or None, optional
         Column used as distance; if None, use ‖(true_pos_x, true_pos_y, true_pos_z)‖.
+    raw_intervals : bool, optional
+        If True, plot only per-bin prediction intervals as vertical error bars (no lines
+        between bins, no smooth fit). If False (default), only the smooth softplus/polynomial
+        bounds (no per-bin error bars).
     ax : matplotlib.axes.Axes or None, optional
         Axes to draw on. If None, a new figure is created.
     save_path : path-like or None, optional
@@ -251,79 +256,100 @@ def plot_column_summary(
         label=f"data (n={len(plot_idx)} shown)" if n_pts > n_points else "data",
     )
 
-    # Prediction intervals: softplus fit (1/β)*ln(1+e^(β(mx+b)))+L; center ± half-width
-    # Weight by bin size (n) first; when equal, tie-break by range (farther right = stronger weight)
+    # Prediction intervals: either raw per-bin bounds or smooth fit (softplus / polynomial)
     x_bin = np.array([(r["distance_lo"] + r["distance_hi"]) / 2 for r in clumps])
     pi_lo = np.array([r["pi_lower"] for r in clumps])
     pi_hi = np.array([r["pi_upper"] for r in clumps])
     n_per_bin = np.array([r["n"] for r in clumps], dtype=np.float64)
     order = np.argsort(x_bin)
     x_sorted = x_bin[order]
-    center = (pi_lo[order] + pi_hi[order]) / 2
-    half_width = (pi_hi[order] - pi_lo[order]) / 2
-    n_sorted = n_per_bin[order]
-    x_span = x_sorted.max() - x_sorted.min()
-    range_tie = (x_sorted - x_sorted.min()) / (x_span + 1e-10)  # 0 at min, 1 at max
-    w = np.maximum(n_sorted + range_tie, 1.0)  # bin size first; if equal, farther right = heavier
-    sigma = 1.0 / np.sqrt(w)  # for weighted least squares in curve_fit
+    pi_lo_sorted = pi_lo[order]
+    pi_hi_sorted = pi_hi[order]
+    center = (pi_lo_sorted + pi_hi_sorted) / 2
+    half_width = (pi_hi_sorted - pi_lo_sorted) / 2
 
     x_min, x_max = x_all.min(), x_all.max()
     pad = 0.05 * (x_max - x_min) if x_max > x_min else 1.0
-    x_curve = np.linspace(x_min, x_max, 200)
 
-    def _fit_softplus(
-        x: np.ndarray, y: np.ndarray, sig: np.ndarray
-    ) -> tuple[bool, np.ndarray]:
-        """Try softplus; on failure use degree-2 polynomial. Returns (ok_softplus, params)."""
-        w_poly = 1.0 / (sig.astype(np.float64) ** 2)
-        if len(x) < 4:
-            coeff = np.polyfit(x, y, min(2, len(x)), w=w_poly)
-            return False, coeff
-        L0 = float(np.min(y))
-        if x_span > 0:
-            m0 = float((y[-1] - y[0]) / x_span) if len(y) > 1 else 0.0
-            b0 = float(y[0] - m0 * x[0])
-        else:
-            m0, b0 = 0.0, float(y[0])
-        beta0 = 2.0
-        try:
-            (beta, m, b, L), _ = curve_fit(
-                _softplus,
-                x,
-                y,
-                p0=[beta0, m0, b0, L0],
-                sigma=sig,
-                bounds=([1e-6, -np.inf, -np.inf, -np.inf], [100.0, np.inf, np.inf, np.inf]),
-            )
-            return True, np.array([float(beta), float(m), float(b), float(L)])
-        except (ValueError, RuntimeError):
-            coeff = np.polyfit(x, y, 2, w=w_poly)
-            return False, coeff
+    if raw_intervals:
+        # No fit, no lines between bins: only per-bin error bars (caps show PI at each range)
+        yerr_lo = center - pi_lo_sorted
+        yerr_hi = pi_hi_sorted - center
+        ax.errorbar(
+            x_sorted,
+            center,
+            yerr=[yerr_lo, yerr_hi],
+            fmt="none",
+            color="black",
+            ecolor="black",
+            elinewidth=1.5,
+            capsize=4,
+            capthick=1.5,
+            zorder=5,
+            label=f"{int(round(confidence * 100))}% prediction interval",
+        )
+    else:
+        # Smooth fit: weight by bin size, tie-break by range
+        n_sorted = n_per_bin[order]
+        x_span = x_sorted.max() - x_sorted.min()
+        range_tie = (x_sorted - x_sorted.min()) / (x_span + 1e-10)
+        w = np.maximum(n_sorted + range_tie, 1.0)
+        sigma = 1.0 / np.sqrt(w)
+        x_curve = np.linspace(x_min, x_max, 200)
 
-    def _eval_fit(ok_softplus: bool, params: np.ndarray, x_eval: np.ndarray) -> np.ndarray:
-        if ok_softplus:
-            return _softplus(x_eval, *params)
-        return np.polyval(params, x_eval)
+        def _fit_softplus(
+            x: np.ndarray, y: np.ndarray, sig: np.ndarray
+        ) -> tuple[bool, np.ndarray]:
+            """Try softplus; on failure use degree-2 polynomial. Returns (ok_softplus, params)."""
+            w_poly = 1.0 / (sig.astype(np.float64) ** 2)
+            if len(x) < 4:
+                coeff = np.polyfit(x, y, min(2, len(x)), w=w_poly)
+                return False, coeff
+            L0 = float(np.min(y))
+            if x_span > 0:
+                m0 = float((y[-1] - y[0]) / x_span) if len(y) > 1 else 0.0
+                b0 = float(y[0] - m0 * x[0])
+            else:
+                m0, b0 = 0.0, float(y[0])
+            beta0 = 2.0
+            try:
+                (beta, m, b, L), _ = curve_fit(
+                    _softplus,
+                    x,
+                    y,
+                    p0=[beta0, m0, b0, L0],
+                    sigma=sig,
+                    bounds=([1e-6, -np.inf, -np.inf, -np.inf], [100.0, np.inf, np.inf, np.inf]),
+                )
+                return True, np.array([float(beta), float(m), float(b), float(L)])
+            except (ValueError, RuntimeError):
+                coeff = np.polyfit(x, y, 2, w=w_poly)
+                return False, coeff
 
-    ok_center, params_center = _fit_softplus(x_sorted, center, sigma)
-    ok_hw, params_hw = _fit_softplus(x_sorted, half_width, sigma)
-    center_curve = _eval_fit(ok_center, params_center, x_curve)
-    hw_curve = np.maximum(_eval_fit(ok_hw, params_hw, x_curve), 0.0)
-    ax.plot(
-        x_curve,
-        center_curve - hw_curve,
-        linestyle="-",
-        color="black",
-        linewidth=1.5,
-        label=f"{int(round(confidence * 100))}% prediction interval",
-    )
-    ax.plot(
-        x_curve,
-        center_curve + hw_curve,
-        linestyle="-",
-        color="black",
-        linewidth=1.5,
-    )
+        def _eval_fit(ok_softplus: bool, params: np.ndarray, x_eval: np.ndarray) -> np.ndarray:
+            if ok_softplus:
+                return _softplus(x_eval, *params)
+            return np.polyval(params, x_eval)
+
+        ok_center, params_center = _fit_softplus(x_sorted, center, sigma)
+        ok_hw, params_hw = _fit_softplus(x_sorted, half_width, sigma)
+        center_curve = _eval_fit(ok_center, params_center, x_curve)
+        hw_curve = np.maximum(_eval_fit(ok_hw, params_hw, x_curve), 0.0)
+        ax.plot(
+            x_curve,
+            center_curve - hw_curve,
+            linestyle="-",
+            color="black",
+            linewidth=1.5,
+            label=f"{int(round(confidence * 100))}% prediction interval",
+        )
+        ax.plot(
+            x_curve,
+            center_curve + hw_curve,
+            linestyle="-",
+            color="black",
+            linewidth=1.5,
+        )
 
     # Y-axis: 1.3 × largest CI half-width, centered at 0
     max_half_width = float(np.max(half_width)) if len(half_width) > 0 else 1.0
