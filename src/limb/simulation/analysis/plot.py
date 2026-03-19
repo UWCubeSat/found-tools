@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
-from matplotlib.lines import Line2D
 from scipy import stats
+from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
 
 from limb.simulation.analysis.metrics import column_summary, fill_pixel_metrics
@@ -22,6 +22,14 @@ from limb.simulation.analysis.metrics import column_summary, fill_pixel_metrics
 
 # Columns used for camera identity (must be present in df)
 _CAMERA_KEY_COLS = ("cam_focal_length", "cam_x_resolution", "cam_y_resolution")
+
+
+def _softplus(
+    x: np.ndarray, beta: float, m: float, b: float, L: float
+) -> np.ndarray:
+    """Softplus: (1/β) * ln(1 + exp(β*(m*x + b))) + L. Smooth corner; β controls sharpness."""
+    z = beta * (m * x + b)
+    return (1.0 / beta) * np.logaddexp(0, z) + L
 
 
 def _camera_id_from_row(row: pd.Series) -> tuple[float, int, int]:
@@ -243,7 +251,7 @@ def plot_column_summary(
         label=f"data (n={len(plot_idx)} shown)" if n_pts > n_points else "data",
     )
 
-    # Prediction intervals: second-order polynomial fit; center ± half-width so lines don't cross
+    # Prediction intervals: softplus fit (1/β)*ln(1+e^(β(mx+b)))+L; center ± half-width
     # Weight by bin size (n) first; when equal, tie-break by range (farther right = stronger weight)
     x_bin = np.array([(r["distance_lo"] + r["distance_hi"]) / 2 for r in clumps])
     pi_lo = np.array([r["pi_lower"] for r in clumps])
@@ -257,14 +265,41 @@ def plot_column_summary(
     x_span = x_sorted.max() - x_sorted.min()
     range_tie = (x_sorted - x_sorted.min()) / (x_span + 1e-10)  # 0 at min, 1 at max
     w = np.maximum(n_sorted + range_tie, 1.0)  # bin size first; if equal, farther right = heavier
-    coeff_center = np.polyfit(x_sorted, center, 3, w=w)
-    coeff_hw = np.polyfit(x_sorted, half_width, 3, w=w)
+    sigma = 1.0 / np.sqrt(w)  # for weighted least squares in curve_fit
+
     x_min, x_max = x_all.min(), x_all.max()
     pad = 0.05 * (x_max - x_min) if x_max > x_min else 1.0
-    # Confidence interval curves from least to greatest distance (full data range)
     x_curve = np.linspace(x_min, x_max, 200)
-    center_curve = np.polyval(coeff_center, x_curve)
-    hw_curve = np.maximum(np.polyval(coeff_hw, x_curve), 0.0)
+
+    def _fit_softplus(x: np.ndarray, y: np.ndarray, sig: np.ndarray) -> tuple[float, float, float, float]:
+        """Return (beta, m, b, L) for softplus; on failure fall back to constant (L, β=1, m=0, b=0)."""
+        if len(x) < 4:
+            return 1.0, 0.0, 0.0, float(np.mean(y))
+        # Initial L ≈ floor (min), m,b from linear trend, β = moderate sharpness
+        L0 = float(np.min(y))
+        if x_span > 0:
+            m0 = float((y[-1] - y[0]) / x_span) if len(y) > 1 else 0.0
+            b0 = float(y[0] - m0 * x[0])
+        else:
+            m0, b0 = 0.0, float(y[0])
+        beta0 = 2.0
+        try:
+            (beta, m, b, L), _ = curve_fit(
+                _softplus,
+                x,
+                y,
+                p0=[beta0, m0, b0, L0],
+                sigma=sig,
+                bounds=([1e-6, -np.inf, -np.inf, -np.inf], [100.0, np.inf, np.inf, np.inf]),
+            )
+            return float(beta), float(m), float(b), float(L)
+        except (ValueError, RuntimeError):
+            return 1.0, 0.0, 0.0, float(np.mean(y))
+
+    params_center = _fit_softplus(x_sorted, center, sigma)
+    params_hw = _fit_softplus(x_sorted, half_width, sigma)
+    center_curve = _softplus(x_curve, *params_center)
+    hw_curve = np.maximum(_softplus(x_curve, *params_hw), 0.0)
     ax.plot(
         x_curve,
         center_curve - hw_curve,
@@ -286,17 +321,11 @@ def plot_column_summary(
     y_half = 1.3 * max_half_width
     ax.set_ylim(-y_half, y_half)
 
-    # Availability: percentage of data where |error| < 1 px (plotted column as error)
-    availability_pct = 100.0 * np.sum(np.abs(y_all) < 1.0) / n_pts if n_pts > 0 else 0.0
-    handles, labels = ax.get_legend_handles_labels()
-    handles.append(Line2D([0], [0], linestyle="none", marker="none"))
-    labels.append(f"availability: {availability_pct:.1f}%")
-
     ax.set_xlim(x_min - pad, x_max + pad)
     ax.set_xlabel(xlabel if xlabel is not None else "Distance (m)")
     ax.set_ylabel(ylabel if ylabel is not None else column)
     ax.set_title(title if title is not None else column)
-    ax.legend(handles=handles, labels=labels, loc="best", framealpha=0.9)
+    ax.legend(loc="best", framealpha=0.9)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     if save_path is not None:
