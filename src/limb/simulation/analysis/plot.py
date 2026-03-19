@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
+from matplotlib.lines import Line2D
 from scipy import stats
 from scipy.spatial import cKDTree
 
@@ -243,15 +244,21 @@ def plot_column_summary(
     )
 
     # Prediction intervals: second-order polynomial fit; center ± half-width so lines don't cross
+    # Weight by bin size (n) first; when equal, tie-break by range (farther right = stronger weight)
     x_bin = np.array([(r["distance_lo"] + r["distance_hi"]) / 2 for r in clumps])
     pi_lo = np.array([r["pi_lower"] for r in clumps])
     pi_hi = np.array([r["pi_upper"] for r in clumps])
+    n_per_bin = np.array([r["n"] for r in clumps], dtype=np.float64)
     order = np.argsort(x_bin)
     x_sorted = x_bin[order]
     center = (pi_lo[order] + pi_hi[order]) / 2
     half_width = (pi_hi[order] - pi_lo[order]) / 2
-    coeff_center = np.polyfit(x_sorted, center, 2)
-    coeff_hw = np.polyfit(x_sorted, half_width, 2)
+    n_sorted = n_per_bin[order]
+    x_span = x_sorted.max() - x_sorted.min()
+    range_tie = (x_sorted - x_sorted.min()) / (x_span + 1e-10)  # 0 at min, 1 at max
+    w = np.maximum(n_sorted + range_tie, 1.0)  # bin size first; if equal, farther right = heavier
+    coeff_center = np.polyfit(x_sorted, center, 3, w=w)
+    coeff_hw = np.polyfit(x_sorted, half_width, 3, w=w)
     x_min, x_max = x_all.min(), x_all.max()
     pad = 0.05 * (x_max - x_min) if x_max > x_min else 1.0
     # Confidence interval curves from least to greatest distance (full data range)
@@ -274,11 +281,22 @@ def plot_column_summary(
         linewidth=1.5,
     )
 
+    # Y-axis: 1.3 × largest CI half-width, centered at 0
+    max_half_width = float(np.max(half_width)) if len(half_width) > 0 else 1.0
+    y_half = 1.3 * max_half_width
+    ax.set_ylim(-y_half, y_half)
+
+    # Availability: percentage of data where |error| < 1 px (plotted column as error)
+    availability_pct = 100.0 * np.sum(np.abs(y_all) < 1.0) / n_pts if n_pts > 0 else 0.0
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(Line2D([0], [0], linestyle="none", marker="none"))
+    labels.append(f"availability: {availability_pct:.1f}%")
+
     ax.set_xlim(x_min - pad, x_max + pad)
     ax.set_xlabel(xlabel if xlabel is not None else "Distance (m)")
     ax.set_ylabel(ylabel if ylabel is not None else column)
     ax.set_title(title if title is not None else column)
-    ax.legend(loc="best", framealpha=0.9)
+    ax.legend(handles=handles, labels=labels, loc="best", framealpha=0.9)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     if save_path is not None:
