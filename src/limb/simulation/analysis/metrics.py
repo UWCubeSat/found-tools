@@ -1,5 +1,7 @@
 """True metrics from simulation metadata: centroid and apparent radius in pixel space."""
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -303,6 +305,20 @@ def _print_column_summary_table(
 _CAMERA_KEY_COLS = ("cam_focal_length", "cam_x_resolution", "cam_y_resolution")
 
 
+def horizontal_fov_deg_from_row(row: pd.Series) -> float:
+    """Full horizontal field of view in degrees from pinhole geometry.
+
+    Uses ``cam_x_resolution``, ``cam_x_pixel_pitch``, and ``cam_focal_length``.
+    """
+    if "cam_x_pixel_pitch" not in row.index:
+        raise ValueError("Row must contain cam_x_pixel_pitch to compute FOV")
+    sensor_w = float(row["cam_x_resolution"]) * float(row["cam_x_pixel_pitch"])
+    f = float(row["cam_focal_length"])
+    if f <= 0:
+        raise ValueError("cam_focal_length must be positive for FOV")
+    return float(np.rad2deg(2.0 * np.arctan(sensor_w / (2.0 * f))))
+
+
 def split_df_by_camera(
     df: pd.DataFrame,
 ) -> dict[tuple[float, int, int], pd.DataFrame]:
@@ -335,3 +351,46 @@ def split_df_by_camera(
         # key is (focal_length, x_res, y_res) from the grouped columns
         out[(float(key[0]), int(key[1]), int(key[2]))] = group.reset_index(drop=True)
     return out
+
+
+def filter_df_by_fovs(
+    df: pd.DataFrame,
+    fovs: Sequence[float],
+    *,
+    fov_match_atol: float = 1e-3,
+) -> pd.DataFrame:
+    """Keep rows whose camera horizontal FOV (deg) matches one of *fovs*.
+
+    All other camera configurations are excluded. Matching uses
+    :func:`numpy.isclose` with ``rtol=0`` and ``atol=fov_match_atol`` (degrees),
+    same as plotting helpers.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Simulation DataFrame with camera columns.
+    fovs : sequence of float
+        FOV values in degrees to **include**; every other FOV is dropped.
+    fov_match_atol : float, optional
+        Absolute tolerance in degrees (default 1e-3).
+
+    Returns
+    -------
+    pd.DataFrame
+        Concatenation of matching camera groups, with reset index.
+    """
+    if not fovs:
+        raise ValueError("fovs must be a non-empty sequence")
+    by_cam = split_df_by_camera(df)
+    parts: list[pd.DataFrame] = []
+    for _cam_id, sub in by_cam.items():
+        fov_deg = horizontal_fov_deg_from_row(sub.iloc[0])
+        if any(
+            np.isclose(fov_deg, float(t), rtol=0.0, atol=fov_match_atol) for t in fovs
+        ):
+            parts.append(sub)
+    if not parts:
+        raise ValueError(
+            f"No camera groups match fovs={list(fovs)!r} (atol={fov_match_atol}°)"
+        )
+    return pd.concat(parts, ignore_index=True)

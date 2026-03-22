@@ -15,6 +15,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.image import imread
 from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 from scipy import stats
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
@@ -22,6 +23,7 @@ from scipy.spatial import cKDTree
 from limb.simulation.analysis.metrics import (
     column_summary,
     fill_pixel_metrics,
+    horizontal_fov_deg_from_row,
     split_df_by_camera,
 )
 
@@ -55,17 +57,6 @@ def _camera_label(cam_id: tuple[float, int, int]) -> str:
     """Human-readable label for legend."""
     f, wx, wy = cam_id
     return f"{wx}×{wy} f={f:.4g}"
-
-
-def _horizontal_fov_deg_from_row(row: pd.Series) -> float:
-    """Full horizontal field of view in degrees from pinhole geometry."""
-    if "cam_x_pixel_pitch" not in row.index:
-        raise ValueError("Row must contain cam_x_pixel_pitch to compute FOV")
-    sensor_w = float(row["cam_x_resolution"]) * float(row["cam_x_pixel_pitch"])
-    f = float(row["cam_focal_length"])
-    if f <= 0:
-        raise ValueError("cam_focal_length must be positive for FOV")
-    return float(np.rad2deg(2.0 * np.arctan(sensor_w / (2.0 * f))))
 
 
 def _resolution_key_from_row(row: pd.Series) -> tuple[int, int]:
@@ -125,11 +116,39 @@ def _fov_matches_any(fov_deg: float, fovs: Sequence[float], atol: float) -> bool
     return any(np.isclose(fov_deg, float(t), rtol=0.0, atol=atol) for t in fovs)
 
 
+def _resolve_include_fovs(
+    fovs: Sequence[float] | None,
+    include_fovs: Sequence[float] | None,
+) -> Sequence[float] | None:
+    """Return the FOV include-list, or None for no filtering."""
+    if fovs is not None and include_fovs is not None:
+        raise ValueError("Pass only one of fovs and include_fovs.")
+    return include_fovs if include_fovs is not None else fovs
+
+
 def _effective_poly_degree(n_points: int, requested: int) -> int:
     requested = max(0, int(requested))
     if n_points <= 0:
         return 0
     return min(requested, max(0, n_points - 1))
+
+
+def _resolve_availability_ylim(
+    y_min: float | None,
+    y_max: float | None,
+) -> tuple[float, float]:
+    """Return (lo, hi) availability % for ``ax.set_ylim``; None uses 0 and/or 100."""
+    lo = 0.0 if y_min is None else float(y_min)
+    hi = 100.0 if y_max is None else float(y_max)
+    if lo < 0.0 or hi > 100.0:
+        raise ValueError(
+            f"availability y-limits must be within [0, 100] percent; got [{lo}, {hi}]."
+        )
+    if hi <= lo:
+        raise ValueError(
+            f"availability_y_max ({hi}) must be greater than availability_y_min ({lo})."
+        )
+    return lo, hi
 
 
 def _filtered_camera_subsets(
@@ -167,7 +186,7 @@ def _filtered_camera_subsets(
     res_by_cam: dict[tuple[float, int, int], tuple[int, int]] = {}
     for cam_id, sub in by_cam_all.items():
         row0 = sub.iloc[0]
-        fov_by_cam[cam_id] = _horizontal_fov_deg_from_row(row0)
+        fov_by_cam[cam_id] = horizontal_fov_deg_from_row(row0)
         res_by_cam[cam_id] = _resolution_key_from_row(row0)
 
     by_cam: dict[tuple[float, int, int], pd.DataFrame] = {}
@@ -201,11 +220,16 @@ def plot_column_availability_by_camera(
     distance_min: float | None = None,
     distance_max: float | None = None,
     fovs: Sequence[float] | None = None,
+    include_fovs: Sequence[float] | None = None,
     fov_match_atol: float = 1e-3,
     resolutions: Sequence[int | tuple[int, int]] | None = None,
     title: str | None = None,
     xlabel: str | None = None,
     ylabel: str | None = None,
+    zoom_x_to_data: bool = True,
+    x_pad_fraction: float = 0.02,
+    availability_y_min: float | None = None,
+    availability_y_max: float | None = None,
     ax: Optional[plt.Axes] = None,
     save_path: str | Path | None = None,
 ) -> plt.Figure:
@@ -215,7 +239,13 @@ def plot_column_availability_by_camera(
     ``availability_below=availability_bound``. **Availability** in each distance bin is
     ``100 * (count of values with column < bound) / n`` (strict ``<``).
     **100%** means every point in that bin satisfies ``column < availability_bound``;
-    **0%** means none do. The y-axis is fixed to ``[0, 100]``.
+    **0%** means none do.
+
+    By default the x-axis is **zoomed** to the span where fit lines are drawn (per-camera
+    distance extent), with a small pad. The y-axis is **linear** in percent; use
+    ``availability_y_min`` / ``availability_y_max`` to **crop** the vertical range
+    (defaults: full ``0–100`` when both are None; a lone ``None`` uses ``0`` or ``100``
+    for that bound).
 
     Bin midpoints and availability values are used only to fit a polynomial (see
     ``fit_poly_degree``); the figure shows that **smooth fit** over each camera's
@@ -236,8 +266,19 @@ def plot_column_availability_by_camera(
         than the requested degree.
     n_bins, confidence, distance_column
         Passed to :func:`column_summary`.
-    distance_min, distance_max, fovs, fov_match_atol, resolutions
-        Same filtering as :func:`plot_column_summary_by_camera`.
+    distance_min, distance_max, fovs, include_fovs, fov_match_atol, resolutions
+        Same filtering as :func:`plot_column_summary_by_camera`. ``fovs`` and
+        ``include_fovs`` are synonyms (**include-only**; other FOVs excluded); pass
+        only one.
+    zoom_x_to_data : bool, optional
+        If True (default), set x-limits to the min/max range covered by the plotted
+        fit lines (plus ``x_pad_fraction`` padding). If False, matplotlib autoscale.
+    x_pad_fraction : float, optional
+        Pad added to each side of the data x-span as a fraction of that span
+        (default 0.02). Ignored if ``zoom_x_to_data`` is False.
+    availability_y_min, availability_y_max : float or None, optional
+        Crop the y-axis to this availability range (percent). ``None`` uses ``0`` for
+        *min* and ``100`` for *max*. Values are plain linear percent (no warping).
     title, xlabel, ylabel, ax, save_path
         Plot labels and I/O; defaults describe availability and the bound.
 
@@ -245,12 +286,15 @@ def plot_column_availability_by_camera(
     -------
     matplotlib.figure.Figure
     """
+    y_lo, y_hi = _resolve_availability_ylim(availability_y_min, availability_y_max)
+
+    fovs_f = _resolve_include_fovs(fovs, include_fovs)
     by_cam, fov_by_cam, res_by_cam = _filtered_camera_subsets(
         df,
         distance_column=distance_column,
         distance_min=distance_min,
         distance_max=distance_max,
-        fovs=fovs,
+        fovs=fovs_f,
         fov_match_atol=fov_match_atol,
         resolutions=resolutions,
     )
@@ -273,6 +317,9 @@ def plot_column_availability_by_camera(
         fig, ax = plt.subplots(figsize=(10, 6))
     else:
         fig = ax.figure
+
+    x_min_data = np.inf
+    x_max_data = -np.inf
 
     for cam_id, sub in by_cam.items():
         fov_r = round(fov_by_cam[cam_id], 6)
@@ -303,6 +350,8 @@ def plot_column_availability_by_camera(
             x_lo, x_hi = float(x_mid.min()), float(x_mid.max())
             x_line = np.linspace(x_lo, x_hi, 200) if x_hi > x_lo else np.full(200, x_lo)
             y_line = np.clip(np.polyval(coeffs, x_line), 0.0, 100.0)
+            x_min_data = min(x_min_data, float(np.min(x_line)))
+            x_max_data = max(x_max_data, float(np.max(x_line)))
             ax.plot(
                 x_line,
                 y_line,
@@ -311,6 +360,11 @@ def plot_column_availability_by_camera(
                 linewidth=2.0,
                 alpha=0.9,
             )
+
+    if zoom_x_to_data and np.isfinite(x_min_data) and np.isfinite(x_max_data):
+        span = x_max_data - x_min_data
+        pad = float(x_pad_fraction) * (span if span > 0 else max(abs(x_max_data), 1.0) * 0.01)
+        ax.set_xlim(x_min_data - pad, x_max_data + pad)
 
     fov_handles: list[Line2D] = [
         Line2D(
@@ -369,19 +423,25 @@ def plot_column_availability_by_camera(
             else f"Range: ‖true position‖ (m){range_suffix}"
         )
     )
-    ax.set_ylabel(
-        ylabel
-        if ylabel is not None
-        else (
-            f"Availability (%) — 100% = all {column} < {availability_bound:g}"
-        )
+    default_yl = (
+        f"Availability (%) — 100% = all {column} < {availability_bound:g}"
     )
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    else:
+        crop_note = (
+            f" (axis {y_lo:g}–{y_hi:g}%)"
+            if (y_lo > 0.0 or y_hi < 100.0)
+            else ""
+        )
+        ax.set_ylabel(default_yl + crop_note)
     default_title = (
         f"Availability vs range by camera (deg≤{fit_poly_degree} fit, {column} < "
         f"{availability_bound:g}){range_suffix}"
     )
     ax.set_title(title if title is not None else default_title)
-    ax.set_ylim(0.0, 100.0)
+    ax.set_ylim(y_lo, y_hi)
+    ax.yaxis.set_major_locator(MaxNLocator(nbins="auto", steps=[1, 2, 2.5, 5, 10]))
     ax.grid(True, alpha=0.3)
     fig.tight_layout(rect=(0.0, 0.0, 0.74, 1.0))
     if save_path is not None:
@@ -401,6 +461,7 @@ def plot_column_summary_by_camera(
     distance_min: float | None = None,
     distance_max: float | None = None,
     fovs: Sequence[float] | None = None,
+    include_fovs: Sequence[float] | None = None,
     fov_match_atol: float = 1e-3,
     resolutions: Sequence[int | tuple[int, int]] | None = None,
     title: str | None = None,
@@ -450,8 +511,12 @@ def plot_column_summary_by_camera(
         definition as ``column_summary``). Narrows data before binning and acts as an
         effective x-axis zoom.
     fovs : sequence of float or None, optional
-        If set, only camera configurations whose horizontal FOV (degrees) matches one
-        of these values (within ``fov_match_atol``) are plotted.
+        **Include-only** list: if set, only cameras whose horizontal FOV (degrees)
+        matches one of these values (within ``fov_match_atol``) are plotted; all
+        other FOVs are excluded.
+    include_fovs : sequence of float or None, optional
+        Same as ``fovs`` (clearer name). Pass only one of ``fovs`` and
+        ``include_fovs``.
     fov_match_atol : float, optional
         Absolute tolerance in degrees for matching ``fovs`` (default 1e-3).
     resolutions : sequence or None, optional
@@ -470,12 +535,13 @@ def plot_column_summary_by_camera(
     matplotlib.figure.Figure
         The figure used for plotting.
     """
+    fovs_f = _resolve_include_fovs(fovs, include_fovs)
     by_cam, fov_by_cam, res_by_cam = _filtered_camera_subsets(
         df,
         distance_column=distance_column,
         distance_min=distance_min,
         distance_max=distance_max,
-        fovs=fovs,
+        fovs=fovs_f,
         fov_match_atol=fov_match_atol,
         resolutions=resolutions,
     )
