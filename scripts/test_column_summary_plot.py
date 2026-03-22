@@ -11,6 +11,7 @@ from matplotlib import pyplot as plt
 
 from limb.simulation.analysis.metrics import column_summary, fill_pixel_metrics
 from limb.simulation.analysis.plot import (
+    plot_column_availability_by_camera,
     plot_column_summary,
     plot_column_summary_by_camera,
 )
@@ -18,7 +19,7 @@ from limb.simulation.analysis.plot import (
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
-    csv_path = repo_root / "distance_multi-camera-leo-geo.csv"
+    csv_path = repo_root / "huge-multi-cam-angle-noise.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV not found: {csv_path}")
 
@@ -31,7 +32,7 @@ def main() -> None:
     print("Done.")
 
     # Column to summarize and plot (e.g. apparent radius or residual)
-    column = "delta_r_apparent"
+    column = "delta_x_centroid"
     print(f"\n--- column_summary for {column} (printed table) ---\n")
     column_summary(df, column, n_bins=10, print_results=True)
 
@@ -75,6 +76,7 @@ def main() -> None:
         df,
         column,
         use_fit_line=True,
+        fit_poly_degree=1,
         n_bins=10,
         confidence=0.99,
         title="Per-camera linear fit to bin means",
@@ -84,6 +86,39 @@ def main() -> None:
     )
     plt.close(fig3)
 
+    zoom_poly_path = out_dir / "column_summary_by_camera_zoom_poly2.png"
+    print(f"Zoom + deg-2 fit → {zoom_poly_path}")
+    fig4 = plot_column_summary_by_camera(
+        df,
+        column,
+        use_fit_line=True,
+        fit_poly_degree=2,
+        distance_min=1.0e7,
+        distance_max=2.5e7,
+        n_bins=8,
+        confidence=0.99,
+        xlabel="Range (m)",
+        save_path=zoom_poly_path,
+    )
+    plt.close(fig4)
+
+    avail_path = out_dir / "column_availability_by_camera_radial.png"
+    print(f"Availability only (100% = all points < bound) → {avail_path}")
+    fig5 = plot_column_availability_by_camera(
+        df,
+        column,
+        availability_bound=.01,
+        fit_poly_degree=1,
+        distance_min=1.0e7,
+        distance_max=20.0e7,
+        n_bins=8,
+        confidence=0.99,
+        xlabel="Range (m)",
+        ylabel="Availability (%)",
+        title="Availability vs Range",
+        save_path=avail_path,
+    )
+    plt.close(fig5)
     print("Done.")
 
 

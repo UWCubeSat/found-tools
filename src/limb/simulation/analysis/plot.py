@@ -6,6 +6,7 @@ residuals in the illumination frame.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +33,13 @@ _CAMERA_KEY_COLS = ("cam_focal_length", "cam_x_resolution", "cam_y_resolution")
 def _hyper3(x: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
     """Three-parameter rectangular hyperbola: a + b / (x + c). Requires x + c > 0."""
     return a + b / (x + c)
+
+
+def _softplus(x: np.ndarray, beta: float, m: float, b: float, L: float) -> np.ndarray:
+    """L + (1/β) log(1 + exp(β (m x + b))); stable for :func:`scipy.optimize.curve_fit`."""
+    x = np.asarray(x, dtype=np.float64)
+    u = np.clip(float(beta) * (float(m) * x + float(b)), -700.0, 700.0)
+    return float(L) + (1.0 / float(beta)) * np.log1p(np.exp(u))
 
 
 def _camera_id_from_row(row: pd.Series) -> tuple[float, int, int]:
@@ -64,14 +72,337 @@ def _resolution_key_from_row(row: pd.Series) -> tuple[int, int]:
     return (int(row["cam_x_resolution"]), int(row["cam_y_resolution"]))
 
 
+def _distance_series(df: pd.DataFrame, distance_column: str | None) -> pd.Series:
+    """Per-row distance consistent with :func:`column_summary`."""
+    if distance_column is not None:
+        if distance_column not in df.columns:
+            raise ValueError(f"Distance column {distance_column!r} not in DataFrame")
+        return df[distance_column]
+    for c in ("true_pos_x", "true_pos_y", "true_pos_z"):
+        if c not in df.columns:
+            raise ValueError(
+                "Either provide distance_column or ensure true_pos_x, true_pos_y, true_pos_z exist"
+            )
+    pos = df[["true_pos_x", "true_pos_y", "true_pos_z"]].values
+    return pd.Series(np.linalg.norm(pos, axis=1), index=df.index, dtype="float64")
+
+
+def _filter_df_by_distance_range(
+    df: pd.DataFrame,
+    distance_column: str | None,
+    distance_min: float | None,
+    distance_max: float | None,
+) -> pd.DataFrame:
+    """Keep rows whose distance is in ``[distance_min, distance_max]`` (inclusive)."""
+    if distance_min is None and distance_max is None:
+        return df
+    dist = _distance_series(df, distance_column)
+    mask = dist.notna()
+    if distance_min is not None:
+        mask &= dist >= float(distance_min)
+    if distance_max is not None:
+        mask &= dist <= float(distance_max)
+    return df.loc[mask].reset_index(drop=True)
+
+
+def _normalize_resolution_filter(
+    resolutions: Sequence[int | tuple[int, int]] | None,
+) -> set[tuple[int, int]] | None:
+    if resolutions is None:
+        return None
+    out: set[tuple[int, int]] = set()
+    for r in resolutions:
+        if isinstance(r, (int, np.integer)):
+            ri = int(r)
+            out.add((ri, ri))
+        else:
+            wx, wy = r
+            out.add((int(wx), int(wy)))
+    return out
+
+
+def _fov_matches_any(fov_deg: float, fovs: Sequence[float], atol: float) -> bool:
+    return any(np.isclose(fov_deg, float(t), rtol=0.0, atol=atol) for t in fovs)
+
+
+def _effective_poly_degree(n_points: int, requested: int) -> int:
+    requested = max(0, int(requested))
+    if n_points <= 0:
+        return 0
+    return min(requested, max(0, n_points - 1))
+
+
+def _filtered_camera_subsets(
+    df: pd.DataFrame,
+    *,
+    distance_column: str | None,
+    distance_min: float | None,
+    distance_max: float | None,
+    fovs: Sequence[float] | None,
+    fov_match_atol: float,
+    resolutions: Sequence[int | tuple[int, int]] | None,
+) -> tuple[
+    dict[tuple[float, int, int], pd.DataFrame],
+    dict[tuple[float, int, int], float],
+    dict[tuple[float, int, int], tuple[int, int]],
+]:
+    """Split *df* by camera and apply distance / FOV / resolution filters."""
+    df_work = _filter_df_by_distance_range(
+        df, distance_column, distance_min, distance_max
+    )
+    if df_work.empty:
+        raise ValueError(
+            "No rows left after applying distance_min / distance_max filters."
+        )
+
+    by_cam_all = split_df_by_camera(df_work)
+    if not by_cam_all:
+        raise ValueError(
+            "split_df_by_camera returned no groups (empty DataFrame or missing camera columns)."
+        )
+
+    res_allow = _normalize_resolution_filter(resolutions)
+
+    fov_by_cam: dict[tuple[float, int, int], float] = {}
+    res_by_cam: dict[tuple[float, int, int], tuple[int, int]] = {}
+    for cam_id, sub in by_cam_all.items():
+        row0 = sub.iloc[0]
+        fov_by_cam[cam_id] = _horizontal_fov_deg_from_row(row0)
+        res_by_cam[cam_id] = _resolution_key_from_row(row0)
+
+    by_cam: dict[tuple[float, int, int], pd.DataFrame] = {}
+    for cam_id, sub in by_cam_all.items():
+        fov_deg = fov_by_cam[cam_id]
+        res_k = res_by_cam[cam_id]
+        if fovs is not None and not _fov_matches_any(fov_deg, fovs, fov_match_atol):
+            continue
+        if res_allow is not None and res_k not in res_allow:
+            continue
+        by_cam[cam_id] = sub
+
+    if not by_cam:
+        raise ValueError(
+            "No camera groups left after fovs / resolutions filters "
+            "(check values and fov_match_atol)."
+        )
+
+    return by_cam, fov_by_cam, res_by_cam
+
+
+def plot_column_availability_by_camera(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    availability_bound: float,
+    fit_poly_degree: int = 1,
+    n_bins: int = 10,
+    confidence: float = 0.95,
+    distance_column: str | None = None,
+    distance_min: float | None = None,
+    distance_max: float | None = None,
+    fovs: Sequence[float] | None = None,
+    fov_match_atol: float = 1e-3,
+    resolutions: Sequence[int | tuple[int, int]] | None = None,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    ax: Optional[plt.Axes] = None,
+    save_path: str | Path | None = None,
+) -> plt.Figure:
+    """Plot **availability** vs range per camera (polynomial fit, not bin connectors).
+
+    For each camera, uses :func:`~limb.simulation.analysis.metrics.column_summary` with
+    ``availability_below=availability_bound``. **Availability** in each distance bin is
+    ``100 * (count of values with column < bound) / n`` (strict ``<``).
+    **100%** means every point in that bin satisfies ``column < availability_bound``;
+    **0%** means none do. The y-axis is fixed to ``[0, 100]``.
+
+    Bin midpoints and availability values are used only to fit a polynomial (see
+    ``fit_poly_degree``); the figure shows that **smooth fit** over each camera's
+    distance span, **not** straight segments connecting consecutive bins.
+
+    **Encoding:** color = FOV (degrees), linestyle = resolution ``(width × height)``.
+
+    Parameters
+    ----------
+    df, column
+        Same as :func:`plot_column_summary_by_camera`.
+    availability_bound : float
+        Strict upper bound: points with ``column < availability_bound`` count as
+        "available" toward the percentage.
+    fit_poly_degree : int, optional
+        Polynomial degree for the least-squares fit through per-bin availability
+        (default 1). Capped per camera to ``n_bins - 1`` when there are fewer bins
+        than the requested degree.
+    n_bins, confidence, distance_column
+        Passed to :func:`column_summary`.
+    distance_min, distance_max, fovs, fov_match_atol, resolutions
+        Same filtering as :func:`plot_column_summary_by_camera`.
+    title, xlabel, ylabel, ax, save_path
+        Plot labels and I/O; defaults describe availability and the bound.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    by_cam, fov_by_cam, res_by_cam = _filtered_camera_subsets(
+        df,
+        distance_column=distance_column,
+        distance_min=distance_min,
+        distance_max=distance_max,
+        fovs=fovs,
+        fov_match_atol=fov_match_atol,
+        resolutions=resolutions,
+    )
+
+    unique_fovs = sorted({round(fov_by_cam[cid], 6) for cid in by_cam})
+    fov_to_display: dict[float, str] = {f: f"{f:g}°" for f in unique_fovs}
+    unique_res = sorted({res_by_cam[cid] for cid in by_cam})
+
+    cmap = plt.get_cmap("tab10")
+    fov_color: dict[float, tuple] = {
+        f: cmap(i % cmap.N) for i, f in enumerate(unique_fovs)
+    }
+
+    linestyles = ["-", "--", "-.", ":"]
+    res_linestyle: dict[tuple[int, int], str] = {
+        r: linestyles[i % len(linestyles)] for i, r in enumerate(unique_res)
+    }
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    else:
+        fig = ax.figure
+
+    for cam_id, sub in by_cam.items():
+        fov_r = round(fov_by_cam[cam_id], 6)
+        color = fov_color[fov_r]
+        res_k = res_by_cam[cam_id]
+        ls = res_linestyle[res_k]
+
+        clumps = column_summary(
+            sub,
+            column,
+            confidence=confidence,
+            dropna=True,
+            n_bins=n_bins,
+            distance_column=distance_column,
+            print_results=False,
+            availability_below=float(availability_bound),
+        )
+        if not clumps:
+            continue
+        x_mid = np.array([(r["distance_lo"] + r["distance_hi"]) / 2.0 for r in clumps])
+        avail = np.array([float(r["pct_below"]) for r in clumps])
+        order = np.argsort(x_mid)
+        x_mid = x_mid[order]
+        avail = avail[order]
+        if x_mid.size >= 1:
+            deg_eff = _effective_poly_degree(int(x_mid.size), fit_poly_degree)
+            coeffs = np.polyfit(x_mid, avail, deg_eff)
+            x_lo, x_hi = float(x_mid.min()), float(x_mid.max())
+            x_line = np.linspace(x_lo, x_hi, 200) if x_hi > x_lo else np.full(200, x_lo)
+            y_line = np.clip(np.polyval(coeffs, x_line), 0.0, 100.0)
+            ax.plot(
+                x_line,
+                y_line,
+                linestyle=ls,
+                color=color,
+                linewidth=2.0,
+                alpha=0.9,
+            )
+
+    fov_handles: list[Line2D] = [
+        Line2D(
+            [0, 1],
+            [0, 0],
+            linestyle="-",
+            color=fov_color[f],
+            linewidth=2.5,
+            label=fov_to_display[f],
+        )
+        for f in unique_fovs
+    ]
+    res_handles = [
+        Line2D(
+            [0],
+            [0],
+            color="0.35",
+            linestyle=res_linestyle[r],
+            linewidth=2.0,
+            label=f"{r[0]}×{r[1]}",
+        )
+        for r in unique_res
+    ]
+
+    leg1 = ax.legend(
+        handles=fov_handles,
+        title="FOV",
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        framealpha=0.9,
+    )
+    ax.add_artist(leg1)
+    ax.legend(
+        handles=res_handles,
+        title="Resolution (line style)",
+        loc="lower left",
+        bbox_to_anchor=(1.02, 0.0),
+        borderaxespad=0.0,
+        framealpha=0.9,
+    )
+
+    range_bits = []
+    if distance_min is not None:
+        range_bits.append(f"≥{distance_min:g}")
+    if distance_max is not None:
+        range_bits.append(f"≤{distance_max:g}")
+    range_suffix = f" [{', '.join(range_bits)}]" if range_bits else ""
+
+    ax.set_xlabel(
+        xlabel
+        if xlabel is not None
+        else (
+            f"Range: {distance_column} (m){range_suffix}"
+            if distance_column is not None
+            else f"Range: ‖true position‖ (m){range_suffix}"
+        )
+    )
+    ax.set_ylabel(
+        ylabel
+        if ylabel is not None
+        else (
+            f"Availability (%) — 100% = all {column} < {availability_bound:g}"
+        )
+    )
+    default_title = (
+        f"Availability vs range by camera (deg≤{fit_poly_degree} fit, {column} < "
+        f"{availability_bound:g}){range_suffix}"
+    )
+    ax.set_title(title if title is not None else default_title)
+    ax.set_ylim(0.0, 100.0)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout(rect=(0.0, 0.0, 0.74, 1.0))
+    if save_path is not None:
+        fig.savefig(save_path, bbox_inches="tight")
+    return fig
+
+
 def plot_column_summary_by_camera(
     df: pd.DataFrame,
     column: str,
     *,
     use_fit_line: bool = False,
+    fit_poly_degree: int = 1,
     n_bins: int = 10,
     confidence: float = 0.95,
     distance_column: str | None = None,
+    distance_min: float | None = None,
+    distance_max: float | None = None,
+    fovs: Sequence[float] | None = None,
+    fov_match_atol: float = 1e-3,
+    resolutions: Sequence[int | tuple[int, int]] | None = None,
     title: str | None = None,
     xlabel: str | None = None,
     ylabel: str | None = None,
@@ -95,6 +426,9 @@ def plot_column_summary_by_camera(
     Two legend boxes: FOV → color, and resolution → marker or linestyle depending on
     ``use_fit_line``.
 
+    For availability-only plots (0–100% with 100% = all points below a bound), use
+    :func:`plot_column_availability_by_camera`.
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -104,12 +438,28 @@ def plot_column_summary_by_camera(
         Numeric column whose per-bin means are plotted on the y-axis.
     use_fit_line : bool, optional
         If False (default), plot one scatter series per camera (color × marker).
-        If True, plot a linear least-squares fit through each camera's bin means
-        over the same x midpoints (color × linestyle).
+        If True, plot a polynomial least-squares fit (see ``fit_poly_degree``) through
+        each camera's bin means.
+    fit_poly_degree : int, optional
+        Polynomial degree for ``use_fit_line`` (default 1). Capped per series to
+        ``n_points - 1`` when there are fewer bin means than the requested degree.
     n_bins, confidence, distance_column
         Passed to :func:`column_summary`.
+    distance_min, distance_max : float or None, optional
+        If set, only rows with distance in this inclusive range are used (same distance
+        definition as ``column_summary``). Narrows data before binning and acts as an
+        effective x-axis zoom.
+    fovs : sequence of float or None, optional
+        If set, only camera configurations whose horizontal FOV (degrees) matches one
+        of these values (within ``fov_match_atol``) are plotted.
+    fov_match_atol : float, optional
+        Absolute tolerance in degrees for matching ``fovs`` (default 1e-3).
+    resolutions : sequence or None, optional
+        If set, only these resolutions are included. Each entry is ``(width, height)``
+        in pixels, or a single ``int`` ``n`` meaning ``(n, n)``.
     title, xlabel, ylabel : str or None
-        Axis labels; if None, defaults are derived from *column* and distance.
+        Primary axis title/labels; if None, defaults are derived from *column*,
+        distance, and mode.
     ax : matplotlib.axes.Axes or None
         Axes to draw on; if None, a new figure is created.
     save_path : path-like or None
@@ -120,27 +470,20 @@ def plot_column_summary_by_camera(
     matplotlib.figure.Figure
         The figure used for plotting.
     """
-    by_cam = split_df_by_camera(df)
-    if not by_cam:
-        raise ValueError(
-            "split_df_by_camera returned no groups (empty DataFrame or missing camera columns)."
-        )
+    by_cam, fov_by_cam, res_by_cam = _filtered_camera_subsets(
+        df,
+        distance_column=distance_column,
+        distance_min=distance_min,
+        distance_max=distance_max,
+        fovs=fovs,
+        fov_match_atol=fov_match_atol,
+        resolutions=resolutions,
+    )
 
-    # Collect FOV and resolution keys across cameras for stable color / marker maps
-    fov_by_cam: dict[tuple[float, int, int], float] = {}
-    res_by_cam: dict[tuple[float, int, int], tuple[int, int]] = {}
-    for cam_id, sub in by_cam.items():
-        row0 = sub.iloc[0]
-        fov_by_cam[cam_id] = _horizontal_fov_deg_from_row(row0)
-        res_by_cam[cam_id] = _resolution_key_from_row(row0)
-
-    unique_fovs = sorted({round(v, 6) for v in fov_by_cam.values()})
-    # Map rounded FOV back to a representative label
-    fov_to_display: dict[float, str] = {}
-    for f in unique_fovs:
-        fov_to_display[f] = f"{f:g}°"
-
-    unique_res = sorted({res_by_cam[k] for k in by_cam})
+    # Maps keyed only by cameras we plot
+    unique_fovs = sorted({round(fov_by_cam[cid], 6) for cid in by_cam})
+    fov_to_display: dict[float, str] = {f: f"{f:g}°" for f in unique_fovs}
+    unique_res = sorted({res_by_cam[cid] for cid in by_cam})
 
     cmap = plt.get_cmap("tab10")
     fov_color: dict[float, tuple] = {
@@ -188,25 +531,18 @@ def plot_column_summary_by_camera(
         y_mean = y_mean[order]
 
         if use_fit_line:
-            if x_mid.size >= 2:
-                m, b = np.polyfit(x_mid, y_mean, 1)
-                x_line = np.linspace(float(x_mid.min()), float(x_mid.max()), 200)
-                y_line = m * x_line + b
+            if x_mid.size >= 1:
+                deg_eff = _effective_poly_degree(int(x_mid.size), fit_poly_degree)
+                coeffs = np.polyfit(x_mid, y_mean, deg_eff)
+                x_lo, x_hi = float(x_mid.min()), float(x_mid.max())
+                x_line = np.linspace(x_lo, x_hi, 200) if x_hi > x_lo else np.full(200, x_lo)
+                y_line = np.polyval(coeffs, x_line)
                 ax.plot(
                     x_line,
                     y_line,
                     linestyle=ls,
                     color=color,
                     linewidth=2.0,
-                )
-            elif x_mid.size == 1:
-                ax.plot(
-                    x_mid,
-                    y_mean,
-                    linestyle=ls,
-                    color=color,
-                    marker=marker,
-                    markersize=6,
                 )
         else:
             ax.scatter(
@@ -293,20 +629,31 @@ def plot_column_summary_by_camera(
         framealpha=0.9,
     )
 
+    range_bits = []
+    if distance_min is not None:
+        range_bits.append(f"≥{distance_min:g}")
+    if distance_max is not None:
+        range_bits.append(f"≤{distance_max:g}")
+    range_suffix = f" [{', '.join(range_bits)}]" if range_bits else ""
+
     ax.set_xlabel(
         xlabel
         if xlabel is not None
         else (
-            f"Range: {distance_column} (m)"
+            f"Range: {distance_column} (m){range_suffix}"
             if distance_column is not None
-            else "Range: ‖true position‖ (m)"
+            else f"Range: ‖true position‖ (m){range_suffix}"
         )
     )
     ax.set_ylabel(ylabel if ylabel is not None else f"Mean {column} (per bin)")
-    mode = "linear fit" if use_fit_line else "bin means"
-    default_title = f"{column} vs range by camera ({mode})"
+    if use_fit_line:
+        mode = f"deg-{fit_poly_degree} poly fit (capped by n)"
+    else:
+        mode = "bin means"
+    default_title = f"{column} vs range by camera ({mode}){range_suffix}"
     ax.set_title(title if title is not None else default_title)
     ax.grid(True, alpha=0.3)
+
     # Leave room outside axes for the two anchored legends
     fig.tight_layout(rect=(0.0, 0.0, 0.74, 1.0))
     if save_path is not None:
@@ -524,7 +871,7 @@ def plot_column_summary(
         label=f"data (n={len(plot_idx)} shown)" if n_pts > n_points else "data",
     )
 
-    # Prediction intervals: either raw per-bin bounds or smooth fit (hyperbolic / polynomial)
+    # Prediction intervals: either raw per-bin bounds or smooth fit (softplus / polynomial)
     x_bin = np.array([(r["distance_lo"] + r["distance_hi"]) / 2 for r in clumps])
     pi_lo = np.array([r["pi_lower"] for r in clumps])
     pi_hi = np.array([r["pi_upper"] for r in clumps])
@@ -565,46 +912,42 @@ def plot_column_summary(
         sigma = 1.0 / np.sqrt(w)
         x_curve = np.linspace(x_min, x_max, 200)
 
-        def _fit_hyper3(
-            x: np.ndarray, y: np.ndarray, sig: np.ndarray, x_eval: np.ndarray
+        def _fit_softplus(
+            x: np.ndarray, y: np.ndarray, sig: np.ndarray
         ) -> tuple[bool, np.ndarray]:
-            """Try y = a + b/(x+c); on failure use degree-2 polynomial. Returns (ok_hyper, params)."""
+            """Try softplus; on failure use degree-2 polynomial. Returns (ok_softplus, params)."""
             w_poly = 1.0 / (sig.astype(np.float64) ** 2)
-            if len(x) < 3:
+            if len(x) < 4:
                 coeff = np.polyfit(x, y, min(2, len(x)), w=w_poly)
                 return False, coeff
-            x_min_all = float(np.minimum(np.min(x), np.min(x_eval)))
-            x_max_all = float(np.maximum(np.max(x), np.max(x_eval)))
-            x_rng = max(x_max_all - x_min_all, 1e-9)
-            # Keep x + c > 0 everywhere we evaluate
-            c_lo = -x_min_all + max(1e-9, 1e-6 * max(abs(x_min_all), 1.0))
-            a0 = float(np.mean(y))
-            b0 = float((y[0] - y[-1]) * (x_min_all + max(x_span, 1.0))) if len(y) > 1 else 0.0
-            # Start inside feasible region: x_min + c0 = small positive fraction of range
-            c0 = float(-x_min_all + 0.05 * x_rng)
-            if c0 <= c_lo:
-                c0 = c_lo + 0.05 * x_rng
+            L0 = float(np.min(y))
+            if x_span > 0:
+                m0 = float((y[-1] - y[0]) / x_span) if len(y) > 1 else 0.0
+                b0 = float(y[0] - m0 * x[0])
+            else:
+                m0, b0 = 0.0, float(y[0])
+            beta0 = 2.0
             try:
-                (a, b, c), _ = curve_fit(
-                    _hyper3,
+                (beta, m, b, L), _ = curve_fit(
+                    _softplus,
                     x,
                     y,
-                    p0=[a0, b0, c0],
+                    p0=[beta0, m0, b0, L0],
                     sigma=sig,
-                    bounds=([-np.inf, -np.inf, c_lo], [np.inf, np.inf, np.inf]),
+                    bounds=([1e-6, -np.inf, -np.inf, -np.inf], [100.0, np.inf, np.inf, np.inf]),
                 )
-                return True, np.array([float(a), float(b), float(c)])
+                return True, np.array([float(beta), float(m), float(b), float(L)])
             except (ValueError, RuntimeError):
                 coeff = np.polyfit(x, y, 2, w=w_poly)
                 return False, coeff
 
-        def _eval_fit(ok_hyper: bool, params: np.ndarray, x_eval: np.ndarray) -> np.ndarray:
-            if ok_hyper:
-                return _hyper3(x_eval, *params)
+        def _eval_fit(ok_softplus: bool, params: np.ndarray, x_eval: np.ndarray) -> np.ndarray:
+            if ok_softplus:
+                return _softplus(x_eval, *params)
             return np.polyval(params, x_eval)
 
-        ok_center, params_center = _fit_hyper3(x_sorted, center, sigma, x_curve)
-        ok_hw, params_hw = _fit_hyper3(x_sorted, half_width, sigma, x_curve)
+        ok_center, params_center = _fit_softplus(x_sorted, center, sigma)
+        ok_hw, params_hw = _fit_softplus(x_sorted, half_width, sigma)
         center_curve = _eval_fit(ok_center, params_center, x_curve)
         hw_curve = np.maximum(_eval_fit(ok_hw, params_hw, x_curve), 0.0)
         ax.plot(

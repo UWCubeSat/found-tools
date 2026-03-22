@@ -152,6 +152,7 @@ def column_summary(
     n_bins: int = 10,
     distance_column: str | None = None,
     print_results: bool = True,
+    availability_below: float | None = None,
 ) -> list[dict[str, float | int]]:
     """Compute mean, std, and prediction interval per distance clump, then print.
 
@@ -186,12 +187,18 @@ def column_summary(
         norm of (true_pos_x, true_pos_y, true_pos_z).
     print_results : bool, optional
         If True (default), print a table of stats per clump.
+    availability_below : float or None, optional
+        If set, each clump dict also includes ``pct_below``: percentage (0–100) of
+        non-NaN values in that clump with ``column < availability_below`` (strict
+        ``<``). This matches **availability** in
+        :func:`~limb.simulation.analysis.plot.plot_column_availability_by_camera`
+        where 100% means all points in the bin are below the bound.
 
     Returns
     -------
     list[dict[str, float | int]]
         One dict per clump with keys "distance_lo", "distance_hi", "mean", "std",
-        "pi_lower", "pi_upper", "n".
+        "pi_lower", "pi_upper", "n", and optionally "pct_below".
     """
     if column not in df.columns:
         raise ValueError(f"Column {column!r} not in DataFrame")
@@ -240,10 +247,14 @@ def column_summary(
         stats_dict = _single_clump_stats(data, confidence)
         stats_dict["distance_lo"] = distance_lo
         stats_dict["distance_hi"] = distance_hi
+        if availability_below is not None:
+            stats_dict["pct_below"] = float(np.mean(data < float(availability_below)) * 100.0)
         results.append(stats_dict)
 
     if print_results:
-        _print_column_summary_table(column, results, confidence)
+        _print_column_summary_table(
+            column, results, confidence, availability_below=availability_below
+        )
 
     return results
 
@@ -252,17 +263,34 @@ def _print_column_summary_table(
     column: str,
     results: list[dict[str, float | int]],
     confidence: float,
+    availability_below: float | None = None,
 ) -> None:
     """Print a simple table of per-clump stats."""
     pct = int(round(confidence * 100))
-    print(f"Column: {column}  ({pct}% prediction interval)")
+    extra = (
+        f"  (pct below {availability_below:g})"
+        if availability_below is not None and results
+        and "pct_below" in results[0]
+        else ""
+    )
+    print(f"Column: {column}  ({pct}% prediction interval){extra}")
     print("-" * 72)
-    print(f"{'distance range (m)':<28} {'mean':>10} {'std':>10} {'n':>6}")
+    if results and "pct_below" in results[0]:
+        print(
+            f"{'distance range (m)':<28} {'mean':>10} {'std':>10} {'n':>6} {'%<thr':>8}"
+        )
+    else:
+        print(f"{'distance range (m)':<28} {'mean':>10} {'std':>10} {'n':>6}")
     print("-" * 72)
     for r in results:
         lo, hi = r["distance_lo"], r["distance_hi"]
         label = f"[{lo:.2g}, {hi:.2g}]"
-        print(f"{label:<28} {r['mean']:>10.4g} {r['std']:>10.4g} {r['n']:>6}")
+        if "pct_below" in r:
+            print(
+                f"{label:<28} {r['mean']:>10.4g} {r['std']:>10.4g} {r['n']:>6} {r['pct_below']:>8.2f}"
+            )
+        else:
+            print(f"{label:<28} {r['mean']:>10.4g} {r['std']:>10.4g} {r['n']:>6}")
     print("-" * 72)
     print(f"{'PI bounds':<28} {'pi_lower':>10} {'pi_upper':>10}")
     for r in results:

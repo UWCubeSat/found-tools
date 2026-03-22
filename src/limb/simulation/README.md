@@ -17,9 +17,9 @@ All list options use **space-separated** values (e.g. `--fovs 80 70`, not `80, 7
 
 ```bash
 uv run limb_simulation \
-  --fovs 70 \
+  --fovs 5 \
   --resolutions 1024 \
-  --distances 6800000 \
+  --distances 7e6 50e6 200e6 \
   --num-positions-per-point 2 \
   --num-spins-per-position 2 \
   --num-radials-per-spin 4 \
