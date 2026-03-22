@@ -151,6 +151,17 @@ def _resolve_availability_ylim(
     return lo, hi
 
 
+def _proportion_wilson_ci_pct(k: int, n: int, confidence: float) -> tuple[float, float]:
+    """Wilson CI for binomial proportion *k*/*n*; return ``(low_pct, high_pct)``."""
+    if n <= 0:
+        return 0.0, 100.0
+    ci = stats.binomtest(int(k), int(n)).proportion_ci(
+        confidence_level=float(confidence),
+        method="wilson",
+    )
+    return float(ci.low * 100.0), float(ci.high * 100.0)
+
+
 def _filtered_camera_subsets(
     df: pd.DataFrame,
     *,
@@ -230,6 +241,8 @@ def plot_column_availability_by_camera(
     x_pad_fraction: float = 0.02,
     availability_y_min: float | None = None,
     availability_y_max: float | None = None,
+    plot_bin_points: bool = False,
+    bin_error_confidence: float = 0.95,
     ax: Optional[plt.Axes] = None,
     save_path: str | Path | None = None,
 ) -> plt.Figure:
@@ -247,9 +260,11 @@ def plot_column_availability_by_camera(
     (defaults: full ``0–100`` when both are None; a lone ``None`` uses ``0`` or ``100``
     for that bound).
 
-    Bin midpoints and availability values are used only to fit a polynomial (see
+    Bin midpoints and availability values are used to fit a polynomial (see
     ``fit_poly_degree``); the figure shows that **smooth fit** over each camera's
-    distance span, **not** straight segments connecting consecutive bins.
+    distance span. Optionally ``plot_bin_points`` overlays per-bin **points** with
+    **Wilson** confidence intervals on the availability proportion (see
+    ``bin_error_confidence``).
 
     **Encoding:** color = FOV (degrees), linestyle = resolution ``(width × height)``.
 
@@ -279,6 +294,12 @@ def plot_column_availability_by_camera(
     availability_y_min, availability_y_max : float or None, optional
         Crop the y-axis to this availability range (percent). ``None`` uses ``0`` for
         *min* and ``100`` for *max*. Values are plain linear percent (no warping).
+    plot_bin_points : bool, optional
+        If True, draw each bin's availability at the distance midpoint as a point with
+        asymmetric vertical error bars (Wilson interval for ``n_below`` / ``n``).
+    bin_error_confidence : float, optional
+        Confidence level for Wilson intervals when ``plot_bin_points`` is True
+        (default 0.95).
     title, xlabel, ylabel, ax, save_path
         Plot labels and I/O; defaults describe availability and the bound.
 
@@ -344,6 +365,9 @@ def plot_column_availability_by_camera(
         order = np.argsort(x_mid)
         x_mid = x_mid[order]
         avail = avail[order]
+        n_arr = np.array([int(r["n"]) for r in clumps], dtype=np.int64)[order]
+        k_arr = np.array([int(r["n_below"]) for r in clumps], dtype=np.int64)[order]
+
         if x_mid.size >= 1:
             deg_eff = _effective_poly_degree(int(x_mid.size), fit_poly_degree)
             coeffs = np.polyfit(x_mid, avail, deg_eff)
@@ -358,6 +382,36 @@ def plot_column_availability_by_camera(
                 linestyle=ls,
                 color=color,
                 linewidth=2.0,
+                alpha=0.9,
+                zorder=3,
+            )
+            x_min_data = min(x_min_data, float(np.min(x_mid)))
+            x_max_data = max(x_max_data, float(np.max(x_mid)))
+
+        if plot_bin_points and x_mid.size >= 1:
+            ci_lo = np.empty_like(avail, dtype=np.float64)
+            ci_hi = np.empty_like(avail, dtype=np.float64)
+            for i in range(x_mid.size):
+                ci_lo[i], ci_hi[i] = _proportion_wilson_ci_pct(
+                    int(k_arr[i]), int(n_arr[i]), bin_error_confidence
+                )
+            yerr_lo = np.maximum(0.0, avail - ci_lo)
+            yerr_hi = np.maximum(0.0, ci_hi - avail)
+            ax.errorbar(
+                x_mid,
+                avail,
+                yerr=[yerr_lo, yerr_hi],
+                fmt="o",
+                color=color,
+                ecolor=color,
+                elinewidth=1.2,
+                capsize=3,
+                capthick=1.0,
+                markersize=5,
+                markeredgecolor="black",
+                markeredgewidth=0.5,
+                linestyle="none",
+                zorder=5,
                 alpha=0.9,
             )
 
@@ -388,6 +442,20 @@ def plot_column_availability_by_camera(
         )
         for r in unique_res
     ]
+    if plot_bin_points:
+        pct_e = int(round(float(bin_error_confidence) * 100))
+        res_handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="None",
+                markersize=6,
+                markerfacecolor="0.75",
+                markeredgecolor="black",
+                label=f"Bin % ± {pct_e}% Wilson CI",
+            )
+        )
 
     leg1 = ax.legend(
         handles=fov_handles,

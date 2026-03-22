@@ -30,7 +30,7 @@ def _parse_args() -> argparse.Namespace:
         "--csv",
         type=Path,
         default=None,
-        help="Path to CSV (default: huge-multi-cam-angle-noise.csv in repo root)",
+        help="Path to CSV (default: huge-multi-cam-angle-noise_with_delta_distance.csv in repo root)",
     )
     p.add_argument(
         "--column",
@@ -63,13 +63,24 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Crop availability plot y-axis top (percent); default 100",
     )
+    p.add_argument(
+        "--plot-bin-points",
+        action="store_true",
+        help="On availability plot: draw bin midpoints with Wilson CI error bars",
+    )
+    p.add_argument(
+        "--bin-error-confidence",
+        type=float,
+        default=0.95,
+        help="Confidence level for Wilson intervals (default: 0.95)",
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
     repo_root = Path(__file__).resolve().parent.parent
-    csv_path = args.csv if args.csv is not None else repo_root / "huge-multi-cam-angle-noise.csv"
+    csv_path = args.csv if args.csv is not None else repo_root / "huge-multi-cam-angle-noise_with_delta_distance.csv"
     csv_path = csv_path.resolve()
     if not csv_path.is_file():
         raise FileNotFoundError(f"CSV not found: {csv_path}")
@@ -163,7 +174,7 @@ def main() -> None:
     fig5 = plot_column_availability_by_camera(
         df,
         column,
-        availability_bound=0.01,
+        availability_bound=5000,
         fit_poly_degree=1,
         distance_min=1.0e7,
         distance_max=20.0e7,
@@ -171,11 +182,13 @@ def main() -> None:
         confidence=0.99,
         xlabel="Range (m)",
         ylabel="Availability (%)",
-        title="Availability vs Range",
+        title="Availability vs Range (Distance Error < 5km)",
         save_path=avail_path,
-        include_fovs=[5, 20, 50, 85],
+        include_fovs=[20, 30,40, 50],
         availability_y_min=40,
         availability_y_max=100,
+        plot_bin_points=args.plot_bin_points,
+        bin_error_confidence=args.bin_error_confidence,
     )
     plt.close(fig5)
     print("Done.")

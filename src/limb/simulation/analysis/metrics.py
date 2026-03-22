@@ -194,13 +194,14 @@ def column_summary(
         non-NaN values in that clump with ``column < availability_below`` (strict
         ``<``). This matches **availability** in
         :func:`~limb.simulation.analysis.plot.plot_column_availability_by_camera`
-        where 100% means all points in the bin are below the bound.
+        where 100% means all points in the bin are below the bound. In that case each
+        clump also includes ``n_below``: count of rows with ``column < availability_below``.
 
     Returns
     -------
     list[dict[str, float | int]]
         One dict per clump with keys "distance_lo", "distance_hi", "mean", "std",
-        "pi_lower", "pi_upper", "n", and optionally "pct_below".
+        "pi_lower", "pi_upper", "n", and optionally "pct_below", "n_below".
     """
     if column not in df.columns:
         raise ValueError(f"Column {column!r} not in DataFrame")
@@ -250,7 +251,12 @@ def column_summary(
         stats_dict["distance_lo"] = distance_lo
         stats_dict["distance_hi"] = distance_hi
         if availability_below is not None:
-            stats_dict["pct_below"] = float(np.mean(data < float(availability_below)) * 100.0)
+            thr = float(availability_below)
+            below = data < thr
+            k = int(np.sum(below))
+            nn = int(data.size)
+            stats_dict["n_below"] = k
+            stats_dict["pct_below"] = float(100.0 * k / nn) if nn else 0.0
         results.append(stats_dict)
 
     if print_results:

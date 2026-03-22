@@ -96,7 +96,7 @@ def _parse_args() -> argparse.Namespace:
         "--sigma",
         type=float,
         default=2.0,
-        help="Standard deviation of Gaussian blur applied to the edge of rendered images.",
+        help="Gaussian blur sigma for the limb edge; 0 disables blur (crisp mask).",
     )
     parser.add_argument(
         "--seed",
@@ -172,8 +172,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--num-radials-per-spin must be >= 1.")
     if args.batch_size < 1:
         raise ValueError("--batch-size must be >= 1.")
-    if args.sigma <= 0:
-        raise ValueError("--sigma must be > 0.")
+    if args.sigma < 0:
+        raise ValueError("--sigma must be >= 0 (use 0 for no blur).")
     if args.noise_stars is not None and (args.noise_stars < 0 or args.noise_stars > 1):
         raise ValueError("--noise-stars must be in [0, 1].")
     if args.noise_discretization is not None and args.noise_discretization < 1:

@@ -134,7 +134,8 @@ def process_simulation(
     batch_size : int
         Number of images per batch.
     sigma : float
-        Gaussian blur sigma for edge.
+        Gaussian blur sigma for edge (same units as ``dist``). If ``<= 0``, no blur:
+        unit intensity where ``dist == 0``, zero elsewhere (avoids division by zero).
     row_indices : array-like, optional
         Shape (N,) integer indices for filenames. If provided, images are saved
         as img_{row_indices[j]:06d}.png so they match a DataFrame row index.
@@ -200,7 +201,16 @@ def process_simulation(
                 # 3. Distance Calculation
                 # clamp(Q, min=0) targets the 'outside' for blurring
                 dist = torch.clamp(Q, min=0) / grad_mag
-                intensity = torch.exp(-(dist**2) / (2 * sigma**2))
+                sigma_f = float(sigma)
+                if sigma_f > 0.0:
+                    intensity = torch.exp(-(dist**2) / (2.0 * sigma_f**2))
+                else:
+                    # Zero blur: degenerate Gaussian — no division by zero at sigma == 0
+                    intensity = torch.where(
+                        dist <= 0,
+                        torch.ones_like(dist),
+                        torch.zeros_like(dist),
+                    )
                 intensity = torch.where(
                     wrong_side_mask, torch.zeros_like(intensity), intensity
                 )
