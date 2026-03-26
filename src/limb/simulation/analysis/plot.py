@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,7 @@ from limb.simulation.analysis.metrics import (
     fill_pixel_metrics,
     horizontal_fov_deg_from_row,
     split_df_by_camera,
+    split_df_by_column_value,
 )
 
 
@@ -468,7 +469,7 @@ def plot_column_availability_by_camera(
     ax.add_artist(leg1)
     ax.legend(
         handles=res_handles,
-        title="Resolution (line style)",
+        title="Resolution",
         loc="lower left",
         bbox_to_anchor=(1.02, 0.0),
         borderaxespad=0.0,
@@ -512,6 +513,408 @@ def plot_column_availability_by_camera(
     ax.yaxis.set_major_locator(MaxNLocator(nbins="auto", steps=[1, 2, 2.5, 5, 10]))
     ax.grid(True, alpha=0.3)
     fig.tight_layout(rect=(0.0, 0.0, 0.74, 1.0))
+    if save_path is not None:
+        fig.savefig(save_path, bbox_inches="tight")
+    return fig
+
+
+def _filtered_category_subsets(
+    df: pd.DataFrame,
+    *,
+    category_column: str,
+    distance_column: str | None,
+    distance_min: float | None,
+    distance_max: float | None,
+) -> dict[Any, pd.DataFrame]:
+    df_work = _filter_df_by_distance_range(
+        df, distance_column, distance_min, distance_max
+    )
+    if category_column not in df_work.columns:
+        raise ValueError(
+            f"category_column {category_column!r} not in DataFrame columns"
+        )
+    return split_df_by_column_value(df_work, category_column)
+
+
+def plot_column_summary_by_category(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    category_column: str,
+    category_legend_title: str = "Category",
+    use_fit_line: bool = False,
+    fit_poly_degree: int = 1,
+    n_bins: int = 10,
+    confidence: float = 0.95,
+    distance_column: str | None = None,
+    distance_min: float | None = None,
+    distance_max: float | None = None,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    ax: Optional[plt.Axes] = None,
+    save_path: str | Path | None = None,
+) -> plt.Figure:
+    """Plot per-distance-bin mean of *column* vs range, one series per *category_column* value.
+
+    Same binning and optional polynomial fit as :func:`plot_column_summary_by_camera`,
+    but **color** encodes category (e.g. regression algorithm); no FOV/resolution split.
+    """
+    by_cat = _filtered_category_subsets(
+        df,
+        category_column=category_column,
+        distance_column=distance_column,
+        distance_min=distance_min,
+        distance_max=distance_max,
+    )
+    if not by_cat:
+        raise ValueError(
+            f"No rows after distance filter or no categories in {category_column!r}"
+        )
+
+    unique_cats = sorted(by_cat.keys(), key=lambda k: (pd.isna(k), str(k)))
+    cmap = plt.get_cmap("tab10")
+    cat_color: dict[Any, tuple] = {
+        c: cmap(i % cmap.N) for i, c in enumerate(unique_cats)
+    }
+    point_markers = ["o", "s", "^", "D", "v", "P", "X", "<", ">", "p", "h", "8"]
+    cat_marker: dict[Any, str] = {
+        c: point_markers[i % len(point_markers)] for i, c in enumerate(unique_cats)
+    }
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    else:
+        fig = ax.figure
+
+    for cat_key in unique_cats:
+        sub = by_cat[cat_key]
+        color = cat_color[cat_key]
+        marker = cat_marker[cat_key]
+
+        clumps = column_summary(
+            sub,
+            column,
+            confidence=confidence,
+            dropna=True,
+            n_bins=n_bins,
+            distance_column=distance_column,
+            print_results=False,
+        )
+        if not clumps:
+            continue
+        x_mid = np.array([(r["distance_lo"] + r["distance_hi"]) / 2.0 for r in clumps])
+        y_mean = np.array([r["mean"] for r in clumps])
+        order = np.argsort(x_mid)
+        x_mid = x_mid[order]
+        y_mean = y_mean[order]
+
+        if use_fit_line:
+            if x_mid.size >= 1:
+                deg_eff = _effective_poly_degree(int(x_mid.size), fit_poly_degree)
+                coeffs = np.polyfit(x_mid, y_mean, deg_eff)
+                x_lo, x_hi = float(x_mid.min()), float(x_mid.max())
+                x_line = (
+                    np.linspace(x_lo, x_hi, 200)
+                    if x_hi > x_lo
+                    else np.full(200, x_lo)
+                )
+                y_line = np.polyval(coeffs, x_line)
+                ax.plot(
+                    x_line,
+                    y_line,
+                    linestyle="-",
+                    color=color,
+                    linewidth=2.0,
+                )
+        else:
+            ax.scatter(
+                x_mid,
+                y_mean,
+                marker=marker,
+                s=36,
+                color=color,
+                edgecolors="black",
+                linewidths=0.4,
+                alpha=0.85,
+                zorder=3,
+            )
+
+    handles: list[Line2D] = []
+    for c in unique_cats:
+        label = "" if pd.isna(c) else str(c)
+        if use_fit_line:
+            handles.append(
+                Line2D(
+                    [0, 1],
+                    [0, 0],
+                    linestyle="-",
+                    color=cat_color[c],
+                    linewidth=2.5,
+                    label=label,
+                )
+            )
+        else:
+            handles.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker=cat_marker[c],
+                    linestyle="None",
+                    markersize=10,
+                    markerfacecolor=cat_color[c],
+                    markeredgecolor="black",
+                    label=label,
+                )
+            )
+
+    ax.legend(
+        handles=handles,
+        title=category_legend_title,
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        framealpha=0.9,
+    )
+
+    range_bits: list[str] = []
+    if distance_min is not None:
+        range_bits.append(f"≥{distance_min:g}")
+    if distance_max is not None:
+        range_bits.append(f"≤{distance_max:g}")
+    range_suffix = f" [{', '.join(range_bits)}]" if range_bits else ""
+
+    ax.set_xlabel(
+        xlabel
+        if xlabel is not None
+        else (
+            f"Range: {distance_column} (m){range_suffix}"
+            if distance_column is not None
+            else f"Range: ‖true position‖ (m){range_suffix}"
+        )
+    )
+    ax.set_ylabel(ylabel if ylabel is not None else f"Mean {column} (per bin)")
+    if use_fit_line:
+        mode = f"deg-{fit_poly_degree} poly fit (capped by n)"
+    else:
+        mode = "bin means"
+    default_title = f"{column} vs range by {category_column} ({mode}){range_suffix}"
+    ax.set_title(title if title is not None else default_title)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout(rect=(0.0, 0.0, 0.78, 1.0))
+    if save_path is not None:
+        fig.savefig(save_path, bbox_inches="tight")
+    return fig
+
+
+def plot_column_availability_by_category(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    category_column: str,
+    availability_bound: float,
+    category_legend_title: str = "Category",
+    fit_poly_degree: int = 1,
+    n_bins: int = 10,
+    confidence: float = 0.95,
+    distance_column: str | None = None,
+    distance_min: float | None = None,
+    distance_max: float | None = None,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    zoom_x_to_data: bool = True,
+    x_pad_fraction: float = 0.02,
+    availability_y_min: float | None = None,
+    availability_y_max: float | None = None,
+    plot_bin_points: bool = False,
+    bin_error_confidence: float = 0.95,
+    ax: Optional[plt.Axes] = None,
+    save_path: str | Path | None = None,
+) -> plt.Figure:
+    """Availability vs range with one colored fit per *category_column* value (see camera variant)."""
+    y_lo, y_hi = _resolve_availability_ylim(availability_y_min, availability_y_max)
+
+    by_cat = _filtered_category_subsets(
+        df,
+        category_column=category_column,
+        distance_column=distance_column,
+        distance_min=distance_min,
+        distance_max=distance_max,
+    )
+    if not by_cat:
+        raise ValueError(
+            f"No rows after distance filter or no categories in {category_column!r}"
+        )
+
+    unique_cats = sorted(by_cat.keys(), key=lambda k: (pd.isna(k), str(k)))
+    cmap = plt.get_cmap("tab10")
+    cat_color: dict[Any, tuple] = {
+        c: cmap(i % cmap.N) for i, c in enumerate(unique_cats)
+    }
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    else:
+        fig = ax.figure
+
+    x_min_data = np.inf
+    x_max_data = -np.inf
+
+    for cat_key in unique_cats:
+        sub = by_cat[cat_key]
+        color = cat_color[cat_key]
+
+        clumps = column_summary(
+            sub,
+            column,
+            confidence=confidence,
+            dropna=True,
+            n_bins=n_bins,
+            distance_column=distance_column,
+            print_results=False,
+            availability_below=float(availability_bound),
+        )
+        if not clumps:
+            continue
+        x_mid = np.array([(r["distance_lo"] + r["distance_hi"]) / 2.0 for r in clumps])
+        avail = np.array([float(r["pct_below"]) for r in clumps])
+        order = np.argsort(x_mid)
+        x_mid = x_mid[order]
+        avail = avail[order]
+        n_arr = np.array([int(r["n"]) for r in clumps], dtype=np.int64)[order]
+        k_arr = np.array([int(r["n_below"]) for r in clumps], dtype=np.int64)[order]
+
+        if x_mid.size >= 1:
+            deg_eff = _effective_poly_degree(int(x_mid.size), fit_poly_degree)
+            coeffs = np.polyfit(x_mid, avail, deg_eff)
+            x_lo, x_hi = float(x_mid.min()), float(x_mid.max())
+            x_line = (
+                np.linspace(x_lo, x_hi, 200)
+                if x_hi > x_lo
+                else np.full(200, x_lo)
+            )
+            y_line = np.clip(np.polyval(coeffs, x_line), 0.0, 100.0)
+            x_min_data = min(x_min_data, float(np.min(x_line)))
+            x_max_data = max(x_max_data, float(np.max(x_line)))
+            ax.plot(
+                x_line,
+                y_line,
+                linestyle="-",
+                color=color,
+                linewidth=2.0,
+                alpha=0.9,
+                zorder=3,
+            )
+            x_min_data = min(x_min_data, float(np.min(x_mid)))
+            x_max_data = max(x_max_data, float(np.max(x_mid)))
+
+        if plot_bin_points and x_mid.size >= 1:
+            ci_lo = np.empty_like(avail, dtype=np.float64)
+            ci_hi = np.empty_like(avail, dtype=np.float64)
+            for i in range(x_mid.size):
+                ci_lo[i], ci_hi[i] = _proportion_wilson_ci_pct(
+                    int(k_arr[i]), int(n_arr[i]), bin_error_confidence
+                )
+            yerr_lo = np.maximum(0.0, avail - ci_lo)
+            yerr_hi = np.maximum(0.0, ci_hi - avail)
+            ax.errorbar(
+                x_mid,
+                avail,
+                yerr=[yerr_lo, yerr_hi],
+                fmt="o",
+                color=color,
+                ecolor=color,
+                elinewidth=1.2,
+                capsize=3,
+                capthick=1.0,
+                markersize=5,
+                markeredgecolor="black",
+                markeredgewidth=0.5,
+                linestyle="none",
+                zorder=5,
+                alpha=0.9,
+            )
+
+    if zoom_x_to_data and np.isfinite(x_min_data) and np.isfinite(x_max_data):
+        span = x_max_data - x_min_data
+        pad = float(x_pad_fraction) * (
+            span if span > 0 else max(abs(x_max_data), 1.0) * 0.01
+        )
+        ax.set_xlim(x_min_data - pad, x_max_data + pad)
+
+    handles: list[Line2D] = [
+        Line2D(
+            [0, 1],
+            [0, 0],
+            linestyle="-",
+            color=cat_color[c],
+            linewidth=2.5,
+            label="" if pd.isna(c) else str(c),
+        )
+        for c in unique_cats
+    ]
+    if plot_bin_points:
+        pct_e = int(round(float(bin_error_confidence) * 100))
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="None",
+                markersize=6,
+                markerfacecolor="0.75",
+                markeredgecolor="black",
+                label=f"Bin % ± {pct_e}% Wilson CI",
+            )
+        )
+
+    ax.legend(
+        handles=handles,
+        title=category_legend_title,
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        framealpha=0.9,
+    )
+
+    range_bits: list[str] = []
+    if distance_min is not None:
+        range_bits.append(f"≥{distance_min:g}")
+    if distance_max is not None:
+        range_bits.append(f"≤{distance_max:g}")
+    range_suffix = f" [{', '.join(range_bits)}]" if range_bits else ""
+
+    ax.set_xlabel(
+        xlabel
+        if xlabel is not None
+        else (
+            f"Range: {distance_column} (m){range_suffix}"
+            if distance_column is not None
+            else f"Range: ‖true position‖ (m){range_suffix}"
+        )
+    )
+    default_yl = (
+        f"Availability (%) — 100% = all {column} < {availability_bound:g}"
+    )
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    else:
+        crop_note = (
+            f" (axis {y_lo:g}–{y_hi:g}%)"
+            if (y_lo > 0.0 or y_hi < 100.0)
+            else ""
+        )
+        ax.set_ylabel(default_yl + crop_note)
+    default_title = (
+        f"Availability vs range by {category_column} (deg≤{fit_poly_degree} fit, "
+        f"{column} < {availability_bound:g}){range_suffix}"
+    )
+    ax.set_title(title if title is not None else default_title)
+    ax.set_ylim(y_lo, y_hi)
+    ax.yaxis.set_major_locator(MaxNLocator(nbins="auto", steps=[1, 2, 2.5, 5, 10]))
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout(rect=(0.0, 0.0, 0.78, 1.0))
     if save_path is not None:
         fig.savefig(save_path, bbox_inches="tight")
     return fig

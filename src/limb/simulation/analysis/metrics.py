@@ -1,6 +1,7 @@
 """True metrics from simulation metadata: centroid and apparent radius in pixel space."""
 
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -16,11 +17,6 @@ def apparent_radius_pixels(
     camera: Camera,
 ) -> float:
     """Compute apparent limb radius in pixels (sphere on optical axis).
-
-    For a sphere: apparent angular semi-diameter is arcsin(R/d); in the image
-    plane (focal length f) the semi-diameter is f*tan(arcsin(R/d)) = f*R/sqrt(d²-R²);
-    in pixels that is (f/p)*R/sqrt(d²-R²) with p the pixel pitch. When f=p=1 this
-    equals R/sqrt(d²-R²), which approximates R/d for small R/d.
 
     Parameters
     ----------
@@ -44,7 +40,7 @@ def apparent_radius_pixels(
     radius = float(radius)
     if distance <= radius:
         return np.nan
-    # Image-plane semi-diameter = R/sqrt(d²-R²); pixel scale from calibration
+
     fx = camera.focal_length / camera.x_pixel_pitch
     return float(radius / distance * fx)
 
@@ -118,7 +114,7 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
                     [float(row["true_pos_x"]), float(row["true_pos_y"]), float(row["true_pos_z"])],
                     dtype=np.float64,
                 )
-                df.at[idx, "position_distance_error_m"] = float(
+                df.at[idx, "delta_range"] = float(
                     np.abs(np.linalg.norm(true_pos) - np.linalg.norm(out_vec))
                 )
 
@@ -356,6 +352,39 @@ def split_df_by_camera(
     ):
         # key is (focal_length, x_res, y_res) from the grouped columns
         out[(float(key[0]), int(key[1]), int(key[2]))] = group.reset_index(drop=True)
+    return out
+
+
+def split_df_by_column_value(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    dropna_keys: bool = True,
+) -> dict[Any, pd.DataFrame]:
+    """Split *df* into one sub-DataFrame per distinct value of *column*.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input table.
+    column : str
+        Grouping column (e.g. regression algorithm name).
+    dropna_keys : bool, optional
+        If True (default), rows with NaN in *column* are omitted from the output.
+
+    Returns
+    -------
+    dict[Any, pd.DataFrame]
+        Keys are distinct *column* values; values are row subsets with reset index.
+    """
+    if column not in df.columns:
+        raise ValueError(f"DataFrame must contain column {column!r}")
+    work = df
+    if dropna_keys:
+        work = work.loc[work[column].notna()].reset_index(drop=True)
+    out: dict[Any, pd.DataFrame] = {}
+    for key, group in work.groupby(column, sort=True):
+        out[key] = group.reset_index(drop=True)
     return out
 
 

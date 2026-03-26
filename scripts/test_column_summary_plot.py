@@ -174,7 +174,7 @@ def main() -> None:
     fig5 = plot_column_availability_by_camera(
         df,
         column,
-        availability_bound=5000,
+        availability_bound=100,
         fit_poly_degree=1,
         distance_min=1.0e7,
         distance_max=20.0e7,
@@ -182,11 +182,11 @@ def main() -> None:
         confidence=0.99,
         xlabel="Range (m)",
         ylabel="Availability (%)",
-        title="Availability vs Range (Distance Error < 5km)",
+        title="Availability vs Range (Distance Error < 100m)",
         save_path=avail_path,
-        include_fovs=[20, 30,40, 50],
+        include_fovs=[5, 20, 50, 85],
         availability_y_min=40,
-        availability_y_max=100,
+        availability_y_max=90,
         plot_bin_points=args.plot_bin_points,
         bin_error_confidence=args.bin_error_confidence,
     )
