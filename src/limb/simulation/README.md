@@ -17,17 +17,15 @@ All list options use **space-separated** values (e.g. `--fovs 80 70`, not `80, 7
 
 ```bash
 uv run limb_simulation \
-  --fovs 50 \
-  --resolutions 1024 \
-  --distances 8e6 \
-  --num-positions-per-point 1 \
-  --num-spins-per-position 4 \
-  --num-radials-per-spin 1 \
-  --noise-gaussian 0 10 \
-  --noise-stars 0.005 \
-  --noise-discretization 8 \
-  --noise-motion-blur 5 \
-  --noise-dead-pixels 0.01 0.0 \
+  --fovs 85 \
+  --resolutions 2048 \
+  --distances 9e6 \
+  --num-positions-per-point 2 \
+  --num-spins-per-position 2 \
+  --num-radials-per-spin 2 \
+  --noise-gaussian 0 0 \
+  --noise-stars 0.0001 \
+  --noise-dead-pixels 0.0 0.0 \
   --output-folder sim_images \
   --seed 42 \
   --output-csv sim_metadata.csv
@@ -38,20 +36,20 @@ Omit `--output-csv` and `--output-folder` to write to `sim_metadata.csv` and `si
 ## Options
 
 
-| Option                      | Required | Default            | Description                                                        |
-| --------------------------- | -------- | ------------------ | ------------------------------------------------------------------ |
-| `--semi-axes`               | No       | WGS84 ellipsoid    | Ellipsoid semi-axes a b c (m).                                     |
-| `--fovs`                    | Yes      | —                  | Field-of-view values (degrees), space-separated.                   |
-| `--resolutions`             | Yes      | —                  | Sensor resolutions (pixels, square), space-separated.              |
-| `--distances`               | Yes      | —                  | Distances from ellipsoid center to satellite (m), space-separated. |
-| `--num-earth-points`        | No       | 1                  | Number of uniform earth-point directions.                          |
-| `--num-positions-per-point` | Yes      | —                  | Satellite positions per earth point.                               |
-| `--num-spins-per-position`  | Yes      | —                  | Image spins per position.                                          |
-| `--num-radials-per-spin`    | Yes      | —                  | Image radials per spin.                                            |
-| `--output-csv`              | No       | `sim_metadata.csv` | Metadata CSV path.                                                 |
-| `--output-folder`           | No       | `sim_images`       | Output directory for images.                                       |
-| `--batch-size`              | No       | 500                | Images per render batch.                                           |
-| `--sigma`                   | No       | 2.0                | Gaussian blur sigma for limb edge.                                 |
-| `--seed`                    | No       | None               | Random seed for reproducibility.                                   |
+| Option                      | Required | Default            | Description                                                                                  |
+| --------------------------- | -------- | ------------------ | -------------------------------------------------------------------------------------------- |
+| `--semi-axes`               | No       | WGS84 ellipsoid    | Ellipsoid semi-axes a b c (m).                                                               |
+| `--fovs`                    | Yes      | —                  | Field-of-view values (degrees), space-separated.                                             |
+| `--resolutions`             | Yes      | —                  | Sensor resolutions (pixels, square), space-separated.                                        |
+| `--distances`               | Yes      | —                  | Distances from ellipsoid center to satellite (m), space-separated.                           |
+| `--num-earth-points`        | No       | 1                  | Number of uniform earth-point directions.                                                    |
+| `--num-positions-per-point` | Yes      | —                  | Satellite positions per earth point.                                                         |
+| `--num-spins-per-position`  | Yes      | —                  | Image spins per position.                                                                    |
+| `--num-radials-per-spin`    | Yes      | —                  | Image radials per spin.                                                                      |
+| `--output-csv`              | No       | `sim_metadata.csv` | Metadata CSV path.                                                                           |
+| `--output-folder`           | No       | `sim_images`       | Output directory for images.                                                                 |
+| `--batch-size`              | No       | 500                | Images per render batch.                                                                     |
+| `--sigma`                   | No       | 2.0                | Limb-edge blur in render (must be **> 0**).                      |
+| `--seed`                    | No       | None               | Random seed for reproducibility.                                                             |
 
 

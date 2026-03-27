@@ -96,7 +96,7 @@ def _parse_args() -> argparse.Namespace:
         "--sigma",
         type=float,
         default=2.0,
-        help="Gaussian blur sigma for the limb edge; 0 disables blur (crisp mask).",
+        help="Gaussian blur sigma for the limb edge (must be > 0).",
     )
     parser.add_argument(
         "--seed",
@@ -111,7 +111,10 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         metavar=("MEAN", "SIGMA"),
         default=None,
-        help="Add Gaussian noise: mean and sigma (pixel units). e.g. 0 10.",
+        help=(
+            "Add Gaussian noise: mean and sigma (pixel units); sigma 0 disables. "
+            "e.g. 0 10 or 0 0 for none."
+        ),
     )
     parser.add_argument(
         "--noise-stars",
@@ -141,14 +144,14 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         metavar="LEVELS",
         default=None,
-        help="Discretize intensity to LEVELS per channel. e.g. 8.",
+        help="Discretize intensity to LEVELS per channel; 0 skips. e.g. 8.",
     )
     parser.add_argument(
         "--noise-motion-blur",
         type=int,
         metavar="KERNEL",
         default=None,
-        help="Apply motion blur with kernel size KERNEL (odd). e.g. 5.",
+        help="Apply motion blur with kernel size KERNEL (odd); 0 skips. e.g. 5.",
     )
     return parser.parse_args()
 
@@ -172,16 +175,19 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--num-radials-per-spin must be >= 1.")
     if args.batch_size < 1:
         raise ValueError("--batch-size must be >= 1.")
-    if args.sigma < 0:
-        raise ValueError("--sigma must be >= 0 (use 0 for no blur).")
+    if args.sigma <= 0:
+        raise ValueError("--sigma must be positive.")
+    if args.noise_gaussian is not None and args.noise_gaussian[1] < 0:
+        raise ValueError("--noise-gaussian sigma must be >= 0 (use 0 for no sensor noise).")
     if args.noise_stars is not None and (args.noise_stars < 0 or args.noise_stars > 1):
         raise ValueError("--noise-stars must be in [0, 1].")
-    if args.noise_discretization is not None and args.noise_discretization < 1:
-        raise ValueError("--noise-discretization must be >= 1.")
-    if args.noise_motion_blur is not None and (
-        args.noise_motion_blur < 1 or args.noise_motion_blur % 2 == 0
-    ):
-        raise ValueError("--noise-motion-blur must be odd and >= 1.")
+    if args.noise_discretization is not None and args.noise_discretization < 0:
+        raise ValueError("--noise-discretization must be >= 0 (use 0 to skip).")
+    if args.noise_motion_blur is not None and args.noise_motion_blur != 0:
+        if args.noise_motion_blur < 1 or args.noise_motion_blur % 2 == 0:
+            raise ValueError(
+                "--noise-motion-blur must be 0 (skip) or an odd integer >= 1."
+            )
 
 
 def main() -> None:  # pragma: no cover
@@ -203,33 +209,29 @@ def main() -> None:  # pragma: no cover
         output_path=str(args.output_csv),
     )
 
-    noise_config = None
-    if any(
-        (
-            args.noise_gaussian is not None,
-            args.noise_stars is not None,
-            args.noise_dead_pixels is not None,
-            args.noise_discretization is not None,
-            args.noise_motion_blur is not None,
-        )
+    noise_config: dict = {}
+    if args.noise_gaussian is not None:
+        g_mean, g_sigma = float(args.noise_gaussian[0]), float(args.noise_gaussian[1])
+        if g_mean != 0.0 or g_sigma != 0.0:
+            noise_config["gaussian"] = {"mean": g_mean, "sigma": g_sigma}
+    if args.noise_stars is not None and args.noise_stars > 0.0:
+        noise_config["stars"] = {"prob": float(args.noise_stars)}
+    if args.noise_dead_pixels is not None and (
+        args.noise_dead_pixels[0] > 0.0 or args.noise_dead_pixels[1] > 0.0
     ):
-        noise_config = {}
-        if args.noise_gaussian is not None:
-            noise_config["gaussian"] = {
-                "mean": args.noise_gaussian[0],
-                "sigma": args.noise_gaussian[1],
-            }
-        if args.noise_stars is not None:
-            noise_config["stars"] = {"prob": args.noise_stars}
-        if args.noise_dead_pixels is not None:
-            noise_config["dead_pixels"] = {
-                "salt_prob": args.noise_dead_pixels[0],
-                "pepper_prob": args.noise_dead_pixels[1],
-            }
-        if args.noise_discretization is not None:
-            noise_config["discretization"] = {"levels": args.noise_discretization}
-        if args.noise_motion_blur is not None:
-            noise_config["motion_blur"] = {"kernel_size": args.noise_motion_blur}
+        noise_config["dead_pixels"] = {
+            "salt_prob": float(args.noise_dead_pixels[0]),
+            "pepper_prob": float(args.noise_dead_pixels[1]),
+        }
+    if args.noise_discretization is not None and args.noise_discretization > 0:
+        noise_config["discretization"] = {
+            "levels": int(args.noise_discretization),
+        }
+    if args.noise_motion_blur is not None and args.noise_motion_blur > 0:
+        noise_config["motion_blur"] = {
+            "kernel_size": int(args.noise_motion_blur),
+        }
+    noise_config = noise_config if noise_config else None
 
     coeffs_and_centroid_by_resolution = _calculate_conic_coeffs(args.output_csv)
     args.output_folder.mkdir(parents=True, exist_ok=True)

@@ -69,6 +69,35 @@ class SimulationMainTest(unittest.TestCase):
             ]
         )
 
+    def test_main_noise_all_zero_no_noise_config_passed(self):
+        """0/0 gaussian and disabled flags yield no sensor pipeline."""
+        from limb.simulation.main import main
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            full_argv = _minimal_argv() + [
+                "--output-folder",
+                tmpdir,
+                "--noise-gaussian",
+                "0",
+                "0",
+                "--noise-stars",
+                "0",
+                "--noise-discretization",
+                "0",
+                "--noise-motion-blur",
+                "0",
+                "--noise-dead-pixels",
+                "0",
+                "0",
+                "--sigma",
+                "2",
+            ]
+            with patch("sys.argv", full_argv):
+                with patch("limb.simulation.main.render_conic.process_simulation") as m:
+                    main()
+        for call in m.call_args_list:
+            self.assertIsNone(call.kwargs.get("noise_config"))
+
     def test_main_with_batch_size_and_sigma(self):
         self._run_main(_minimal_argv() + ["--batch-size", "10", "--sigma", "1.5"])
 
@@ -160,11 +189,13 @@ class SimulationValidationTest(unittest.TestCase):
         self.assertIn("batch-size", str(ctx.exception))
 
     def test_sigma_non_positive(self):
-        argv = _minimal_argv() + ["--sigma", "0"]
-        args = self._parse(argv)
-        with self.assertRaises(ValueError) as ctx:
-            self._validate(args)
-        self.assertIn("sigma", str(ctx.exception))
+        for bad in ("-1", "0"):
+            with self.subTest(sigma=bad):
+                argv = _minimal_argv() + ["--sigma", bad]
+                args = self._parse(argv)
+                with self.assertRaises(ValueError) as ctx:
+                    self._validate(args)
+                self.assertIn("sigma", str(ctx.exception).lower())
 
     def test_noise_stars_out_of_range(self):
         argv = _minimal_argv() + ["--noise-stars", "1.5"]
@@ -173,19 +204,36 @@ class SimulationValidationTest(unittest.TestCase):
             self._validate(args)
         self.assertIn("noise-stars", str(ctx.exception))
 
-    def test_noise_discretization_invalid(self):
+    def test_noise_discretization_zero_passes(self):
         argv = _minimal_argv() + ["--noise-discretization", "0"]
+        args = self._parse(argv)
+        self._validate(args)
+
+    def test_noise_discretization_negative(self):
+        argv = _minimal_argv() + ["--noise-discretization", "-1"]
         args = self._parse(argv)
         with self.assertRaises(ValueError) as ctx:
             self._validate(args)
         self.assertIn("noise-discretization", str(ctx.exception))
 
-    def test_noise_motion_blur_even_or_zero(self):
+    def test_noise_motion_blur_even(self):
         argv = _minimal_argv() + ["--noise-motion-blur", "4"]
         args = self._parse(argv)
         with self.assertRaises(ValueError) as ctx:
             self._validate(args)
         self.assertIn("noise-motion-blur", str(ctx.exception))
+
+    def test_noise_motion_blur_zero_passes(self):
+        argv = _minimal_argv() + ["--noise-motion-blur", "0"]
+        args = self._parse(argv)
+        self._validate(args)
+
+    def test_noise_gaussian_negative_sigma(self):
+        argv = _minimal_argv() + ["--noise-gaussian", "0", "-1"]
+        args = self._parse(argv)
+        with self.assertRaises(ValueError) as ctx:
+            self._validate(args)
+        self.assertIn("noise-gaussian", str(ctx.exception).lower())
 
     def test_num_spins_per_position_invalid(self):
         argv = _minimal_argv().copy()

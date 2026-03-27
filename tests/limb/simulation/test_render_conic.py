@@ -149,22 +149,41 @@ class TestSideOfHyperbola(unittest.TestCase):
         self.assertIsInstance(out, torch.Tensor)
 
 
-class TestDiskPixelCoverage(unittest.TestCase):
-    def test_small_disk_mostly_one_pixel(self):
-        """Geometric coverage matches π r² for a disk contained in one pixel."""
+class TestQAnchorBodyInterior(unittest.TestCase):
+    def test_behind_camera_uses_conic_center(self):
+        """Earth at -x (behind) uses Q at ellipse center, not bogus projection."""
         device = torch.device("cpu")
         dtype = torch.float64
-        cx = torch.tensor([16.0], device=device, dtype=dtype)
-        cy = torch.tensor([16.0], device=device, dtype=dtype)
-        r = torch.tensor([0.2], device=device, dtype=dtype)
-        frac = render_conic._disk_pixel_coverage_fraction_batched(
-            cx, cy, r, height=32, width=32, n_gauss=32
-        )
-        expected = float(np.pi * 0.2**2)
-        self.assertLess(abs(float(frac[0, 16, 16].item()) - expected), 2e-3)
+        rc = torch.tensor([[1.0, 0.0, 0.0]], device=device, dtype=dtype)
+        K = torch.eye(3, device=device, dtype=dtype).unsqueeze(0)
+        A1 = torch.tensor([1.0], dtype=dtype)
+        B1 = torch.zeros(1, dtype=dtype)
+        C1 = torch.tensor([1.0], dtype=dtype)
+        D1 = torch.zeros(1, dtype=dtype)
+        E1 = torch.zeros(1, dtype=dtype)
+        F1 = torch.tensor([-4.0], dtype=dtype)
+        qa = render_conic._q_anchor_body_interior(rc, K, A1, B1, C1, D1, E1, F1)
+        self.assertAlmostEqual(float(qa.item()), -4.0, places=5)
 
 
 class TestProcessSimulation(unittest.TestCase):
+    def test_process_simulation_sigma_non_positive_raises(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            coeffs = torch.randn(1, 6)
+            K = torch.eye(3).unsqueeze(0)
+            rc = torch.randn(1, 3)
+            with self.assertRaises(ValueError) as ctx:
+                render_conic.process_simulation(
+                    coeffs,
+                    width=8,
+                    height=8,
+                    output_folder=tmpdir,
+                    K=K,
+                    rc=rc,
+                    sigma=0.0,
+                )
+            self.assertIn("sigma", str(ctx.exception).lower())
+
     def test_process_simulation_writes_images(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             n = 4
@@ -210,7 +229,7 @@ class TestProcessSimulation(unittest.TestCase):
                 K=K,
                 rc=rc,
                 batch_size=10,
-                sigma=0.0,
+                sigma=1.0,
                 row_indices=None,
             )
             self.assertTrue(os.path.isfile(os.path.join(tmpdir, "img_000000.png")))
