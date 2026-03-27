@@ -134,6 +134,33 @@ def _effective_poly_degree(n_points: int, requested: int) -> int:
     return min(requested, max(0, n_points - 1))
 
 
+def _availability_fit_line(
+    x_mid: np.ndarray,
+    avail: np.ndarray,
+    *,
+    fit_poly_degree: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Least-squares polynomial through bin midpoints; result clipped to ``0–100`` %.
+
+    Degree is ``min(2, fit_poly_degree)`` capped by :func:`_effective_poly_degree` (so
+    availability plots use **at most** a quadratic, even when ``fit_poly_degree`` is
+    larger elsewhere in the API).
+    """
+    x_mid = np.asarray(x_mid, dtype=np.float64)
+    avail = np.asarray(avail, dtype=np.float64)
+    x_lo, x_hi = float(x_mid.min()), float(x_mid.max())
+    x_line = (
+        np.linspace(x_lo, x_hi, 200)
+        if x_hi > x_lo
+        else np.full(200, x_lo)
+    )
+    deg_req = min(max(0, int(fit_poly_degree)), 2)
+    deg_eff = _effective_poly_degree(int(x_mid.size), deg_req)
+    coeffs = np.polyfit(x_mid, avail, deg_eff)
+    y_line = np.clip(np.polyval(coeffs, x_line), 0.0, 100.0)
+    return x_line, y_line
+
+
 def _resolve_availability_ylim(
     y_min: float | None,
     y_max: float | None,
@@ -247,7 +274,7 @@ def plot_column_availability_by_camera(
     ax: Optional[plt.Axes] = None,
     save_path: str | Path | None = None,
 ) -> plt.Figure:
-    """Plot **availability** vs range per camera (polynomial fit, not bin connectors).
+    """Plot **availability** vs range per camera (quadratic fit by default, not bin connectors).
 
     For each camera, uses :func:`~limb.simulation.analysis.metrics.column_summary` with
     ``availability_below=availability_bound``. **Availability** in each distance bin is
@@ -261,11 +288,11 @@ def plot_column_availability_by_camera(
     (defaults: full ``0–100`` when both are None; a lone ``None`` uses ``0`` or ``100``
     for that bound).
 
-    Bin midpoints and availability values are used to fit a polynomial (see
-    ``fit_poly_degree``); the figure shows that **smooth fit** over each camera's
-    distance span. Optionally ``plot_bin_points`` overlays per-bin **points** with
-    **Wilson** confidence intervals on the availability proportion (see
-    ``bin_error_confidence``).
+    Bin midpoints are fit with a **quadratic** (degree at most 2; least squares through
+    per-bin availability, then clipped to ``0–100``). The requested ``fit_poly_degree``
+    is capped at 2 for this plot. The smooth curve uses the camera's resolution linestyle.
+    Optionally ``plot_bin_points`` overlays per-bin **points** with **Wilson** confidence
+    intervals on the availability proportion (see ``bin_error_confidence``).
 
     **Encoding:** color = FOV (degrees), linestyle = resolution ``(width × height)``.
 
@@ -277,9 +304,9 @@ def plot_column_availability_by_camera(
         Strict upper bound: points with ``column < availability_bound`` count as
         "available" toward the percentage.
     fit_poly_degree : int, optional
-        Polynomial degree for the least-squares fit through per-bin availability
-        (default 1). Capped per camera to ``n_bins - 1`` when there are fewer bins
-        than the requested degree.
+        Maximum polynomial degree for the smooth curve (capped at **2** for this plot).
+        Further capped per camera to ``n_bins - 1`` when there are fewer bins than the
+        requested degree.
     n_bins, confidence, distance_column
         Passed to :func:`column_summary`.
     distance_min, distance_max, fovs, include_fovs, fov_match_atol, resolutions
@@ -370,11 +397,9 @@ def plot_column_availability_by_camera(
         k_arr = np.array([int(r["n_below"]) for r in clumps], dtype=np.int64)[order]
 
         if x_mid.size >= 1:
-            deg_eff = _effective_poly_degree(int(x_mid.size), fit_poly_degree)
-            coeffs = np.polyfit(x_mid, avail, deg_eff)
-            x_lo, x_hi = float(x_mid.min()), float(x_mid.max())
-            x_line = np.linspace(x_lo, x_hi, 200) if x_hi > x_lo else np.full(200, x_lo)
-            y_line = np.clip(np.polyval(coeffs, x_line), 0.0, 100.0)
+            x_line, y_line = _availability_fit_line(
+                x_mid, avail, fit_poly_degree=fit_poly_degree
+            )
             x_min_data = min(x_min_data, float(np.min(x_line)))
             x_max_data = max(x_max_data, float(np.max(x_line)))
             ax.plot(
@@ -505,7 +530,7 @@ def plot_column_availability_by_camera(
         )
         ax.set_ylabel(default_yl + crop_note)
     default_title = (
-        f"Availability vs range by camera (deg≤{fit_poly_degree} fit, {column} < "
+        f"Availability vs range by camera (quadratic fit, {column} < "
         f"{availability_bound:g}){range_suffix}"
     )
     ax.set_title(title if title is not None else default_title)
@@ -732,7 +757,11 @@ def plot_column_availability_by_category(
     ax: Optional[plt.Axes] = None,
     save_path: str | Path | None = None,
 ) -> plt.Figure:
-    """Availability vs range with one colored fit per *category_column* value (see camera variant)."""
+    """Availability vs range with one colored quadratic fit per category.
+
+    Same binning and clipped polynomial rule as :func:`plot_column_availability_by_camera`;
+    **color** encodes category.
+    """
     y_lo, y_hi = _resolve_availability_ylim(availability_y_min, availability_y_max)
 
     by_cat = _filtered_category_subsets(
@@ -786,15 +815,9 @@ def plot_column_availability_by_category(
         k_arr = np.array([int(r["n_below"]) for r in clumps], dtype=np.int64)[order]
 
         if x_mid.size >= 1:
-            deg_eff = _effective_poly_degree(int(x_mid.size), fit_poly_degree)
-            coeffs = np.polyfit(x_mid, avail, deg_eff)
-            x_lo, x_hi = float(x_mid.min()), float(x_mid.max())
-            x_line = (
-                np.linspace(x_lo, x_hi, 200)
-                if x_hi > x_lo
-                else np.full(200, x_lo)
+            x_line, y_line = _availability_fit_line(
+                x_mid, avail, fit_poly_degree=fit_poly_degree
             )
-            y_line = np.clip(np.polyval(coeffs, x_line), 0.0, 100.0)
             x_min_data = min(x_min_data, float(np.min(x_line)))
             x_max_data = max(x_max_data, float(np.max(x_line)))
             ax.plot(
@@ -907,8 +930,8 @@ def plot_column_availability_by_category(
         )
         ax.set_ylabel(default_yl + crop_note)
     default_title = (
-        f"Availability vs range by {category_column} (deg≤{fit_poly_degree} fit, "
-        f"{column} < {availability_bound:g}){range_suffix}"
+        f"Availability vs range by {category_column} (quadratic fit, {column} < "
+        f"{availability_bound:g}){range_suffix}"
     )
     ax.set_title(title if title is not None else default_title)
     ax.set_ylim(y_lo, y_hi)

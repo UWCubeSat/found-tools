@@ -6,6 +6,82 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 
 
+def _legendre_gauss_torch(n: int, device: torch.device, dtype: torch.dtype):
+    """Gauss–Legendre nodes and weights on [-1, 1] (numpy poly, torch tensors)."""
+    x_np, w_np = np.polynomial.legendre.leggauss(int(n))
+    return (
+        torch.tensor(x_np, device=device, dtype=dtype),
+        torch.tensor(w_np, device=device, dtype=dtype),
+    )
+
+
+def _pixel_xy_from_rc_camera(batch_rc: torch.Tensor, k_inv: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Pixel (x, y) where ``batch_rc`` projects; matches ``Camera.camera_to_pixel``.
+
+    Camera frame: depth along axis 0; ``k_inv`` is ``inverse_calibration_matrix`` per image,
+    shape (B, 3, 3).
+    """
+    x_c = batch_rc[:, 0].clamp(min=torch.finfo(batch_rc.dtype).eps)
+    y_c, z_c = batch_rc[:, 1], batch_rc[:, 2]
+    homog_im = torch.stack(
+        (torch.ones_like(x_c), y_c / x_c, z_c / x_c),
+        dim=1,
+    )
+    k_fwd = torch.linalg.inv(k_inv)
+    p = torch.einsum("bij,bj->bi", k_fwd, homog_im)
+    return p[:, 0], p[:, 1]
+
+
+def _disk_pixel_coverage_fraction_batched(
+    cx: torch.Tensor,
+    cy: torch.Tensor,
+    r: torch.Tensor,
+    height: int,
+    width: int,
+    n_gauss: int = 24,
+) -> torch.Tensor:
+    """Batched horizontal-chord quadrature: disk ∩ unit pixel / pixel area.
+
+    Pixels are [j−½,j+½]×[i−½,i+½] in (x,y), matching integer centers from
+    ``linspace(0, n−1)`` with ``indexing='ij'`` (row i, col j).
+
+    Parameters
+    ----------
+    cx, cy, r : (B,)
+    Returns
+    -------
+    (B, H, W) in [0, 1].
+    """
+    device, dtype = cx.device, cx.dtype
+    Bn = cx.shape[0]
+    t, wt = _legendre_gauss_torch(n_gauss, device, dtype)
+    t_g = t.view(1, 1, 1, n_gauss)
+    w_g = wt.view(1, 1, 1, n_gauss)
+
+    jx = torch.arange(width, device=device, dtype=dtype).view(1, 1, width)
+    iy = torch.arange(height, device=device, dtype=dtype).view(1, height, 1)
+    cx_b = cx.view(Bn, 1, 1)
+    cy_b = cy.view(Bn, 1, 1)
+    r_b = r.view(Bn, 1, 1)
+
+    x0 = (jx - 0.5 - cx_b).expand(Bn, height, width)
+    x1 = (jx + 0.5 - cx_b).expand(Bn, height, width)
+    y0 = (iy - 0.5 - cy_b).expand(Bn, height, width)
+    y1 = (iy + 0.5 - cy_b).expand(Bn, height, width)
+
+    half_h = 0.5 * (y1 - y0)
+    mid_y = 0.5 * (y1 + y0)
+    v = mid_y.unsqueeze(-1) + half_h.unsqueeze(-1) * t_g
+    rsq = (r_b * r_b).unsqueeze(-1)
+    s = torch.sqrt(torch.clamp(rsq - v * v, min=0.0))
+    left = torch.maximum(x0.unsqueeze(-1), -s)
+    right = torch.minimum(x1.unsqueeze(-1), s)
+    chord = torch.clamp(right - left, min=0.0)
+    # ∫ L(v) dv ≈ ((y1-y0)/2) * Σ w_k L(v_k) with half_h = (y1-y0)/2
+    area = half_h * (chord * w_g).sum(dim=-1)
+    return area.clamp(0.0, 1.0)
+
+
 # -----------------------------------------------------------------------------
 # Custom noise implementations (used only within this render pipeline).
 # Pipeline order: gaussian -> stars -> discretization -> motion_blur -> dead_pixels (last).
@@ -120,6 +196,8 @@ def process_simulation(
     sigma=0.0,
     row_indices=None,
     noise_config=None,
+    circle_tol: float = 1e-4,
+    disk_quadrature_points: int = 24,
 ):
     """Render conic coefficients to images.
 
@@ -131,11 +209,32 @@ def process_simulation(
         Image dimensions (same for all in batch).
     output_folder : str
         Directory to write images (no subfolders).
+    K : array-like
+        Shape (N, 3, 3), inverse intrinsics per image.
+    rc : array-like
+        Shape (N, 3), satellite position in camera frame (for visibility and fill anchor).
     batch_size : int
         Number of images per batch.
     sigma : float
-        Gaussian blur sigma for edge (same units as ``dist``). If ``<= 0``, no blur:
-        unit intensity where ``dist == 0``, zero elsewhere (avoids division by zero).
+        Gaussian blur sigma for edge (Taubin path only; see Notes). If ``<= 0``, hard edge
+        on the ``q_fill`` half-plane, or geometric disk fill when applicable.
+    circle_tol : float
+        Relative tolerance: treat conic as a circle when ``|B|/A`` and ``|A-C|/A`` are
+        below this (after ``|A|`` scaling).
+    disk_quadrature_points : int
+        Gauss–Legendre order for disk–pixel area (horizontal chord integral).
+
+    Notes
+    -----
+    **Which side is white:** ``Q`` at the pixel projection of ``rc`` defines the anchor
+    sign; intensity uses the region where ``Q`` matches that sign (via ``q_fill``).
+
+    **Circular conics** (limb near a circle): when ``sigma <= 0`` and coefficients pass
+    the circle test, intensity is the **exact** fraction of each pixel covered by the disk
+    ``(x-cx)²+(y-cy)² ≤ r²``, or its complement, according to the same anchor rule
+    (Gauss–Legendre quadrature of the horizontal slice integral—machine‑accurate for
+    axis‑aligned pixels). Non-circular conics use the Taubin distance on ``q_fill``.
+    If ``sigma > 0``, Taubin is used for all images (including circles).
     row_indices : array-like, optional
         Shape (N,) integer indices for filenames. If provided, images are saved
         as img_{row_indices[j]:06d}.png so they match a DataFrame row index.
@@ -189,28 +288,82 @@ def process_simulation(
                     + E * grid_y
                     + F
                 )
+
+                px_s, py_s = _pixel_xy_from_rc_camera(batch_rc, batch_K)
+                A1 = batch_coeffs[:, 0]
+                B1 = batch_coeffs[:, 1]
+                C1 = batch_coeffs[:, 2]
+                D1 = batch_coeffs[:, 3]
+                E1 = batch_coeffs[:, 4]
+                F1 = batch_coeffs[:, 5]
+                q_sat = (
+                    A1 * px_s**2
+                    + B1 * px_s * py_s
+                    + C1 * py_s**2
+                    + D1 * px_s
+                    + E1 * py_s
+                    + F1
+                )
+                sign_sat = torch.sign(q_sat)
+                sign_sat = torch.where(
+                    sign_sat == 0, torch.ones_like(sign_sat), sign_sat
+                )
+                sign_sat_map = sign_sat.view(-1, 1, 1)
+                q_fill = -Q * sign_sat_map
+
                 # Visible arc mask: dot(ray, rc) > 0 means wrong side (consistent with edge logic)
                 pixel_vec = calibrationx * grid_x + calibrationy * grid_y + calibrationz
                 wrong_side_mask = (pixel_vec * rc_batched).sum(dim=1) > 0
-                
-                # 2. Gradient for Taubin Distance
+
+                # --- Taubin path (q_fill half-space distance) ---
                 gx = 2 * A * grid_x + B * grid_y + D
                 gy = B * grid_x + 2 * C * grid_y + E
                 grad_mag = torch.sqrt(gx**2 + gy**2 + 1e-8)
-
-                # 3. Distance Calculation
-                # clamp(Q, min=0) targets the 'outside' for blurring
-                dist = torch.clamp(Q, min=0) / grad_mag
+                dist = torch.clamp(q_fill, min=0) / grad_mag
                 sigma_f = float(sigma)
                 if sigma_f > 0.0:
                     intensity = torch.exp(-(dist**2) / (2.0 * sigma_f**2))
                 else:
-                    # Zero blur: degenerate Gaussian — no division by zero at sigma == 0
                     intensity = torch.where(
                         dist <= 0,
                         torch.ones_like(dist),
                         torch.zeros_like(dist),
                     )
+
+                # --- Geometric disk coverage for near-circle conics (sigma == 0) ---
+                scale = torch.maximum(torch.abs(A1), torch.abs(C1)).clamp(min=1e-12)
+                is_circle = (torch.abs(B1) / scale < circle_tol) & (
+                    torch.abs(A1 - C1) / scale < circle_tol
+                )
+                denom = 4.0 * A1 * C1 - B1 * B1
+                denom = denom + torch.where(
+                    denom.abs() < 1e-18, torch.full_like(denom, 1e-18), torch.zeros_like(denom)
+                )
+                cx = (B1 * E1 - 2.0 * C1 * D1) / denom
+                cy = (B1 * D1 - 2.0 * A1 * E1) / denom
+                r_sq_phys = cx * cx + cy * cy - F1 / A1
+                r = torch.sqrt(torch.clamp(r_sq_phys, min=0.0))
+                geom_ok = (
+                    is_circle
+                    & (A1.abs() > 1e-12)
+                    & (r_sq_phys > 1e-14)
+                    & (r > 1e-8)
+                    & (sigma_f <= 0.0)
+                )
+                if geom_ok.any():
+                    idx = torch.where(geom_ok)[0]
+                    frac = _disk_pixel_coverage_fraction_batched(
+                        cx[idx],
+                        cy[idx],
+                        r[idx],
+                        height,
+                        width,
+                        n_gauss=int(disk_quadrature_points),
+                    )
+                    fill_disk = (q_sat[idx] <= 0).view(-1, 1, 1)
+                    int_geom = torch.where(fill_disk, frac, 1.0 - frac)
+                    intensity[geom_ok] = int_geom
+
                 intensity = torch.where(
                     wrong_side_mask, torch.zeros_like(intensity), intensity
                 )
@@ -248,4 +401,14 @@ if __name__ == "__main__":
     all_coeffs[:, 2] = torch.abs(all_coeffs[:, 2]) + 0.001
     all_coeffs[:, 5] = -0.5
 
-    process_simulation(all_coeffs, 1280, 720, "sim_out", batch_size=100)
+    eye = torch.eye(3, dtype=all_coeffs.dtype).unsqueeze(0).expand(N_total, 3, 3).clone()
+    rc0 = torch.tensor([[1.0, 0.0, 0.0]], dtype=all_coeffs.dtype).expand(N_total, 3)
+    process_simulation(
+        all_coeffs,
+        1280,
+        720,
+        "sim_out",
+        K=eye,
+        rc=rc0,
+        batch_size=100,
+    )

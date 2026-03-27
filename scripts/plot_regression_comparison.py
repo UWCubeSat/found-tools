@@ -1,7 +1,12 @@
-"""Compare regression algorithms on simulation CSV: centroids, radius, availability vs range.
+"""Compare regression algorithms on simulation CSV: availability vs range (pixel errors).
 
-Reuses :func:`~limb.simulation.analysis.metrics.column_summary` and category plotting
-helpers (same ideas as multi-camera column summary / availability plots).
+Uses :func:`~limb.simulation.analysis.metrics.fill_pixel_metrics` so centroids/radius
+and signed deltas are consistent pixel-space quantities from camera pose; availability
+plots use **absolute** pixel error ``|out − true|`` per axis and for apparent radius.
+
+Optional ``--with-mean`` adds per-bin mean of ``out_*`` vs range (same helpers as
+multi-camera column summary). Availability curves use a **quadratic** (max degree 2)
+polynomial fit to bin availability.
 """
 
 from __future__ import annotations
@@ -51,11 +56,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--distance-min", type=float, default=None)
     p.add_argument("--distance-max", type=float, default=None)
     p.add_argument("--n-bins", type=int, default=10)
-    p.add_argument("--fit-poly-degree", type=int, default=1)
+    p.add_argument("--fit-poly-degree", type=int, default=2)
+    p.add_argument(
+        "--with-mean",
+        action="store_true",
+        help="Also plot per-bin mean of out_x/y_centroid and out_r_apparent vs range",
+    )
     p.add_argument(
         "--no-fit-line",
         action="store_true",
-        help="Plot bin means as scatter instead of polynomial fit lines",
+        help="With --with-mean: plot bin means as scatter instead of polynomial fit lines",
     )
     p.add_argument(
         "--skip-availability",
@@ -65,20 +75,20 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--avail-delta-x-bound",
         type=float,
-        default=500.0,
-        help="Availability bound for delta_x_centroid (strict <); pixels",
+        default=.01,
+        help="Availability: fraction with |Δx| < this (strict); pixels after fill_pixel_metrics",
     )
     p.add_argument(
         "--avail-delta-y-bound",
         type=float,
-        default=5000.0,
-        help="Availability bound for delta_y_centroid (strict <); pixels",
+        default=.01,
+        help="Availability: fraction with |Δy| < this (strict); pixels",
     )
     p.add_argument(
         "--avail-delta-r-bound",
         type=float,
-        default=500.0,
-        help="Availability bound for delta_r_apparent (strict <); pixels",
+        default=.01,
+        help="Availability: fraction with |Δr| < this (strict); pixels",
     )
     p.add_argument(
         "--availability-y-min",
@@ -133,6 +143,10 @@ def main() -> None:
     df = pd.read_csv(csv_path)
     print(f"Rows: {len(df)}")
     df = fill_pixel_metrics(df)
+    # Availability uses symmetric pixel error vs CSV-signed delta columns.
+    df["abs_delta_x_centroid"] = df["delta_x_centroid"].abs()
+    df["abs_delta_y_centroid"] = df["delta_y_centroid"].abs()
+    df["abs_delta_r_apparent"] = df["delta_r_apparent"].abs()
 
     if args.category_column not in df.columns:
         raise ValueError(
@@ -140,17 +154,6 @@ def main() -> None:
             f"have: {list(df.columns)[:20]}..."
         )
 
-    use_fit = not args.no_fit_line
-    common_plot_kw = dict(
-        category_column=args.category_column,
-        category_legend_title=args.legend_title,
-        distance_column=args.distance_column,
-        distance_min=args.distance_min,
-        distance_max=args.distance_max,
-        n_bins=args.n_bins,
-        fit_poly_degree=args.fit_poly_degree,
-        use_fit_line=use_fit,
-    )
     avail_kw = dict(
         category_column=args.category_column,
         category_legend_title=args.legend_title,
@@ -165,26 +168,37 @@ def main() -> None:
         bin_error_confidence=args.bin_error_confidence,
     )
 
-    mean_columns = ("out_x_centroid", "out_y_centroid", "out_r_apparent")
-    for col in mean_columns:
-        if col not in df.columns:
-            raise ValueError(f"CSV missing column {col!r} for mean vs range plot")
-        safe = col.replace(" ", "_")
-        path = out_dir / f"regression_{safe}_vs_range_by_{args.category_column}.png"
-        print(f"Writing {path.name}...")
-        plot_column_summary_by_category(
-            df,
-            col,
-            save_path=path,
-            **common_plot_kw,
+    if args.with_mean:
+        common_plot_kw = dict(
+            category_column=args.category_column,
+            category_legend_title=args.legend_title,
+            distance_column=args.distance_column,
+            distance_min=args.distance_min,
+            distance_max=args.distance_max,
+            n_bins=args.n_bins,
+            fit_poly_degree=args.fit_poly_degree,
+            use_fit_line=not args.no_fit_line,
         )
-        plt.close("all")
+        mean_columns = ("out_x_centroid", "out_y_centroid", "out_r_apparent")
+        for col in mean_columns:
+            if col not in df.columns:
+                raise ValueError(f"CSV missing column {col!r} for mean vs range plot")
+            safe = col.replace(" ", "_")
+            path = out_dir / f"regression_{safe}_vs_range_by_{args.category_column}.png"
+            print(f"Writing {path.name}...")
+            plot_column_summary_by_category(
+                df,
+                col,
+                save_path=path,
+                **common_plot_kw,
+            )
+            plt.close("all")
 
     if not args.skip_availability:
         avail_specs = (
-            ("delta_x_centroid", args.avail_delta_x_bound),
-            ("delta_y_centroid", args.avail_delta_y_bound),
-            ("delta_r_apparent", args.avail_delta_r_bound),
+            ("abs_delta_x_centroid", args.avail_delta_x_bound),
+            ("abs_delta_y_centroid", args.avail_delta_y_bound),
+            ("abs_delta_r_apparent", args.avail_delta_r_bound),
         )
         for col, bound in avail_specs:
             if col not in df.columns:

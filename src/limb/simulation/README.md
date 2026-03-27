@@ -17,17 +17,17 @@ All list options use **space-separated** values (e.g. `--fovs 80 70`, not `80, 7
 
 ```bash
 uv run limb_simulation \
-  --fovs 5 \
+  --fovs 50 \
   --resolutions 1024 \
-  --distances 7e6 50e6 200e6 \
-  --num-positions-per-point 2 \
-  --num-spins-per-position 2 \
-  --num-radials-per-spin 4 \
+  --distances 8e6 \
+  --num-positions-per-point 1 \
+  --num-spins-per-position 4 \
+  --num-radials-per-spin 1 \
   --noise-gaussian 0 10 \
   --noise-stars 0.005 \
   --noise-discretization 8 \
   --noise-motion-blur 5 \
-  --noise-dead-pixels 0.01 0.01 \
+  --noise-dead-pixels 0.01 0.0 \
   --output-folder sim_images \
   --seed 42 \
   --output-csv sim_metadata.csv

@@ -149,6 +149,21 @@ class TestSideOfHyperbola(unittest.TestCase):
         self.assertIsInstance(out, torch.Tensor)
 
 
+class TestDiskPixelCoverage(unittest.TestCase):
+    def test_small_disk_mostly_one_pixel(self):
+        """Geometric coverage matches π r² for a disk contained in one pixel."""
+        device = torch.device("cpu")
+        dtype = torch.float64
+        cx = torch.tensor([16.0], device=device, dtype=dtype)
+        cy = torch.tensor([16.0], device=device, dtype=dtype)
+        r = torch.tensor([0.2], device=device, dtype=dtype)
+        frac = render_conic._disk_pixel_coverage_fraction_batched(
+            cx, cy, r, height=32, width=32, n_gauss=32
+        )
+        expected = float(np.pi * 0.2**2)
+        self.assertLess(abs(float(frac[0, 16, 16].item()) - expected), 2e-3)
+
+
 class TestProcessSimulation(unittest.TestCase):
     def test_process_simulation_writes_images(self):
         with tempfile.TemporaryDirectory() as tmpdir:
