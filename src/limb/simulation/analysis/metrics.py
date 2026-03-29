@@ -54,8 +54,10 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
     position_distance_error_m, and delta columns are filled only when
     out_pos_x, out_pos_y, out_pos_z are all non-NaN.
     position_distance_error_m = |‖true_pos‖ - ‖out_pos‖| (m).
+    ``delta_distance`` = ``‖out_pos − true_pos‖`` (m), same as the Euclidean norm of
+    the Cartesian difference (not ``|‖out‖−‖true‖|``).
     Deltas are signed (out - true): delta_x_centroid, delta_y_centroid,
-    delta_r_apparent (not absolute values).
+    delta_r_apparent (not absolute values); delta_centroid is max(|Δx|,|Δy|) in px.
 
     Parameters
     ----------
@@ -69,12 +71,12 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
         Same DataFrame with true_x_centroid, true_y_centroid, true_r_apparent;
         (when out_pos_* present) out_x_centroid, out_y_centroid, out_r_apparent,
         position_distance_error_m, delta_x_centroid, delta_y_centroid,
-        delta_r_apparent filled.
+        delta_r_apparent, delta_centroid, delta_distance filled.
     """
 
     if "position_distance_error_m" not in df.columns:
         df["position_distance_error_m"] = np.nan
-    for col in ("delta_x_centroid", "delta_y_centroid", "delta_r_apparent"):
+    for col in ("delta_x_centroid", "delta_y_centroid", "delta_r_apparent", "delta_centroid"):
         if col not in df.columns:
             df[col] = np.nan
 
@@ -106,17 +108,17 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
                 out_r = apparent_radius_pixels(rc_out, radius, camera)
                 df.at[idx, "out_r_apparent"] = out_r
                 # Signed deltas (out - true), not absolute
-                df.at[idx, "delta_x_centroid"] = float(ox) - px
-                df.at[idx, "delta_y_centroid"] = float(oy) - py
+                dxc = float(ox) - px
+                dyc = float(oy) - py
+                df.at[idx, "delta_x_centroid"] = dxc
+                df.at[idx, "delta_y_centroid"] = dyc
                 df.at[idx, "delta_r_apparent"] = float(out_r) - df.at[idx, "true_r_apparent"]
-                # Absolute distance error (m): |‖true_pos‖ - ‖out_pos‖|
+                df.at[idx, "delta_centroid"] = float(max(abs(dxc), abs(dyc)))
                 true_pos = np.array(
                     [float(row["true_pos_x"]), float(row["true_pos_y"]), float(row["true_pos_z"])],
                     dtype=np.float64,
                 )
-                df.at[idx, "delta_range"] = float(
-                    np.abs(np.linalg.norm(true_pos) - np.linalg.norm(out_vec))
-                )
+                df.at[idx, "delta_distance"] = float(np.linalg.norm(out_vec - true_pos))
 
     return df
 

@@ -512,13 +512,11 @@ def plot_column_availability_by_camera(
         xlabel
         if xlabel is not None
         else (
-            f"Range: {distance_column} (m){range_suffix}"
-            if distance_column is not None
-            else f"Range: ‖true position‖ (m){range_suffix}"
+            f"Range (m){range_suffix}"
         )
     )
     default_yl = (
-        f"Availability (%) — 100% = all {column} < {availability_bound:g}"
+        f"Availability (%)"
     )
     if ylabel is not None:
         ax.set_ylabel(ylabel)
@@ -530,7 +528,7 @@ def plot_column_availability_by_camera(
         )
         ax.set_ylabel(default_yl + crop_note)
     default_title = (
-        f"Availability vs range by camera (quadratic fit, {column} < "
+        f"Availability vs Range (quadratic fit, {column} < "
         f"{availability_bound:g}){range_suffix}"
     )
     ax.set_title(title if title is not None else default_title)
@@ -713,9 +711,7 @@ def plot_column_summary_by_category(
         xlabel
         if xlabel is not None
         else (
-            f"Range: {distance_column} (m){range_suffix}"
-            if distance_column is not None
-            else f"Range: ‖true position‖ (m){range_suffix}"
+            f"Range (m){range_suffix}"
         )
     )
     ax.set_ylabel(ylabel if ylabel is not None else f"Mean {column} (per bin)")
@@ -723,7 +719,7 @@ def plot_column_summary_by_category(
         mode = f"deg-{fit_poly_degree} poly fit (capped by n)"
     else:
         mode = "bin means"
-    default_title = f"{column} vs range by {category_column} ({mode}){range_suffix}"
+    default_title = f"{column} vs Range ({mode}){range_suffix}"
     ax.set_title(title if title is not None else default_title)
     ax.grid(True, alpha=0.3)
     fig.tight_layout(rect=(0.0, 0.0, 0.78, 1.0))
@@ -740,6 +736,7 @@ def plot_column_availability_by_category(
     availability_bound: float,
     category_legend_title: str = "Category",
     fit_poly_degree: int = 1,
+    plot_fit_line: bool = True,
     n_bins: int = 10,
     confidence: float = 0.95,
     distance_column: str | None = None,
@@ -757,11 +754,16 @@ def plot_column_availability_by_category(
     ax: Optional[plt.Axes] = None,
     save_path: str | Path | None = None,
 ) -> plt.Figure:
-    """Availability vs range with one colored quadratic fit per category.
+    """Availability vs range with one series per category (fit curve and/or bin points).
 
-    Same binning and clipped polynomial rule as :func:`plot_column_availability_by_camera`;
-    **color** encodes category.
+    Same binning as :func:`plot_column_availability_by_camera`. **Color** encodes category.
+    By default draws a clipped polynomial **fit**; set ``plot_fit_line=False`` for bin markers
+    only (typically with ``plot_bin_points=True``).
     """
+    if not plot_fit_line and not plot_bin_points:
+        raise ValueError(
+            "plot_column_availability_by_category requires plot_fit_line and/or plot_bin_points."
+        )
     y_lo, y_hi = _resolve_availability_ylim(availability_y_min, availability_y_max)
 
     by_cat = _filtered_category_subsets(
@@ -815,20 +817,21 @@ def plot_column_availability_by_category(
         k_arr = np.array([int(r["n_below"]) for r in clumps], dtype=np.int64)[order]
 
         if x_mid.size >= 1:
-            x_line, y_line = _availability_fit_line(
-                x_mid, avail, fit_poly_degree=fit_poly_degree
-            )
-            x_min_data = min(x_min_data, float(np.min(x_line)))
-            x_max_data = max(x_max_data, float(np.max(x_line)))
-            ax.plot(
-                x_line,
-                y_line,
-                linestyle="-",
-                color=color,
-                linewidth=2.0,
-                alpha=0.9,
-                zorder=3,
-            )
+            if plot_fit_line:
+                x_line, y_line = _availability_fit_line(
+                    x_mid, avail, fit_poly_degree=fit_poly_degree
+                )
+                x_min_data = min(x_min_data, float(np.min(x_line)))
+                x_max_data = max(x_max_data, float(np.max(x_line)))
+                ax.plot(
+                    x_line,
+                    y_line,
+                    linestyle="-",
+                    color=color,
+                    linewidth=2.0,
+                    alpha=0.9,
+                    zorder=3,
+                )
             x_min_data = min(x_min_data, float(np.min(x_mid)))
             x_max_data = max(x_max_data, float(np.max(x_mid)))
 
@@ -866,17 +869,35 @@ def plot_column_availability_by_category(
         )
         ax.set_xlim(x_min_data - pad, x_max_data + pad)
 
-    handles: list[Line2D] = [
-        Line2D(
-            [0, 1],
-            [0, 0],
-            linestyle="-",
-            color=cat_color[c],
-            linewidth=2.5,
-            label="" if pd.isna(c) else str(c),
-        )
-        for c in unique_cats
-    ]
+    handles: list[Line2D] = []
+    for c in unique_cats:
+        color = cat_color[c]
+        lab = "" if pd.isna(c) else str(c)
+        if plot_fit_line:
+            handles.append(
+                Line2D(
+                    [0, 1],
+                    [0, 0],
+                    linestyle="-",
+                    color=color,
+                    linewidth=2.5,
+                    label=lab,
+                )
+            )
+        elif plot_bin_points:
+            handles.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    linestyle="None",
+                    color=color,
+                    markersize=6,
+                    markeredgecolor="black",
+                    markeredgewidth=0.5,
+                    label=lab,
+                )
+            )
     if plot_bin_points:
         pct_e = int(round(float(bin_error_confidence) * 100))
         handles.append(
@@ -912,13 +933,11 @@ def plot_column_availability_by_category(
         xlabel
         if xlabel is not None
         else (
-            f"Range: {distance_column} (m){range_suffix}"
-            if distance_column is not None
-            else f"Range: ‖true position‖ (m){range_suffix}"
+            f"Range (m){range_suffix}"
         )
     )
     default_yl = (
-        f"Availability (%) — 100% = all {column} < {availability_bound:g}"
+        f"Availability (%)"
     )
     if ylabel is not None:
         ax.set_ylabel(ylabel)
@@ -929,11 +948,15 @@ def plot_column_availability_by_category(
             else ""
         )
         ax.set_ylabel(default_yl + crop_note)
-    default_title = (
-        f"Availability vs range by {category_column} (quadratic fit, {column} < "
-        f"{availability_bound:g}){range_suffix}"
-    )
-    ax.set_title(title if title is not None else default_title)
+    if title is None:
+        if plot_fit_line:
+            mode = f"{column} < {availability_bound:g}"
+        else:
+            mode = f"{column} < {availability_bound:g}"
+        default_title = f"Availability vs Range ({mode}){range_suffix}"
+    else:
+        default_title = title
+    ax.set_title(default_title)
     ax.set_ylim(y_lo, y_hi)
     ax.yaxis.set_major_locator(MaxNLocator(nbins="auto", steps=[1, 2, 2.5, 5, 10]))
     ax.grid(True, alpha=0.3)
@@ -1200,9 +1223,7 @@ def plot_column_summary_by_camera(
         xlabel
         if xlabel is not None
         else (
-            f"Range: {distance_column} (m){range_suffix}"
-            if distance_column is not None
-            else f"Range: ‖true position‖ (m){range_suffix}"
+            f"Range (m){range_suffix}"
         )
     )
     ax.set_ylabel(ylabel if ylabel is not None else f"Mean {column} (per bin)")
@@ -1210,7 +1231,7 @@ def plot_column_summary_by_camera(
         mode = f"deg-{fit_poly_degree} poly fit (capped by n)"
     else:
         mode = "bin means"
-    default_title = f"{column} vs range by camera ({mode}){range_suffix}"
+    default_title = f"{column} vs Range ({mode}){range_suffix}"
     ax.set_title(title if title is not None else default_title)
     ax.grid(True, alpha=0.3)
 

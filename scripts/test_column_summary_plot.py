@@ -52,6 +52,13 @@ def _parse_args() -> argparse.Namespace:
         help="Absolute tolerance in degrees when matching --fovs (default: 1e-3)",
     )
     p.add_argument(
+        "--availability-bound",
+        type=float,
+        default=100.0,
+        metavar="BOUND",
+        help="Availability threshold: 100%% bin = all points with column < BOUND (strict)",
+    )
+    p.add_argument(
         "--availability-y-min",
         type=float,
         default=None,
@@ -169,12 +176,13 @@ def main() -> None:
     )
     plt.close(fig4)
 
+    b = float(args.availability_bound)
     avail_path = out_dir / f"column_availability_by_camera_{column}{fov_tag}.png"
-    print(f"Availability only (100% = all points < bound) → {avail_path}")
+    print(f"Availability ({column} < {b:g}; 100% = all in bin) → {avail_path}")
     fig5 = plot_column_availability_by_camera(
         df,
         column,
-        availability_bound=100,
+        availability_bound=b,
         fit_poly_degree=1,
         distance_min=1.0e7,
         distance_max=20.0e7,
@@ -182,11 +190,11 @@ def main() -> None:
         confidence=0.99,
         xlabel="Range (m)",
         ylabel="Availability (%)",
-        title="Availability vs Range (Distance Error < 100m)",
+        title=f"Availability vs Range ({column} < {b:g})",
         save_path=avail_path,
         include_fovs=[5, 20, 50, 85],
-        availability_y_min=40,
-        availability_y_max=90,
+        availability_y_min=args.availability_y_min,
+        availability_y_max=args.availability_y_max,
         plot_bin_points=args.plot_bin_points,
         bin_error_confidence=args.bin_error_confidence,
     )

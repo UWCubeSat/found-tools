@@ -3,10 +3,14 @@
 Uses :func:`~limb.simulation.analysis.metrics.fill_pixel_metrics` so centroids/radius
 and signed deltas are consistent pixel-space quantities from camera pose; availability
 plots use **absolute** pixel error ``|out − true|`` per axis and for apparent radius.
+Per-metric availability curves are supplemented by one **combined** plot: fraction of
+rows where **all three** |Δx|, |Δy|, and |Δr| are strictly below their bounds on the
+same row.
 
 Optional ``--with-mean`` adds per-bin mean of ``out_*`` vs range (same helpers as
-multi-camera column summary). Availability curves use a **quadratic** (max degree 2)
-polynomial fit to bin availability.
+multi-camera column summary). By default availability uses a **quadratic** (max degree 2)
+fit; ``--availability-bins-only`` plots Wilson bin points only. Use
+``--regression-methods ransac tls`` to restrict rows by ``--category-column``.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
@@ -22,6 +27,34 @@ from limb.simulation.analysis.plot import (
     plot_column_availability_by_category,
     plot_column_summary_by_category,
 )
+
+_COMBINED_PIXEL_FAIL_COL = "_regression_combined_pixel_fail"
+# Synthetic column is 0.0 when |Δx|,|Δy|,|Δr| are all strictly below their bounds, else 1.0
+_COMBINED_AVAIL_SYNTHETIC_BOUND = 0.5
+
+
+def _distance_range_suffix(
+    distance_min: float | None, distance_max: float | None
+) -> str:
+    bits: list[str] = []
+    if distance_min is not None:
+        bits.append(f"≥{distance_min:g}")
+    if distance_max is not None:
+        bits.append(f"≤{distance_max:g}")
+    return f" [{', '.join(bits)}]" if bits else ""
+
+
+def _add_combined_pixel_fail_column(
+    df: pd.DataFrame, bx: float, by: float, br: float
+) -> None:
+    vx = df["abs_delta_x_centroid"].to_numpy(dtype=np.float64, copy=False)
+    vy = df["abs_delta_y_centroid"].to_numpy(dtype=np.float64, copy=False)
+    vr = df["abs_delta_r_apparent"].to_numpy(dtype=np.float64, copy=False)
+    ok = np.isfinite(vx) & np.isfinite(vy) & np.isfinite(vr)
+    pass_all = ok & (vx < bx) & (vy < by) & (vr < br)
+    fail = np.ones(len(df), dtype=np.float64)
+    fail[pass_all] = 0.0
+    df[_COMBINED_PIXEL_FAIL_COL] = fail
 
 
 def _parse_args() -> argparse.Namespace:
@@ -108,6 +141,24 @@ def _parse_args() -> argparse.Namespace:
         help="On availability plots: bin midpoints with Wilson CI error bars",
     )
     p.add_argument(
+        "--availability-bins-only",
+        action="store_true",
+        help=(
+            "Availability plots: draw bin points only (implies --plot-bin-points); "
+            "omit polynomial fit curves"
+        ),
+    )
+    p.add_argument(
+        "--regression-methods",
+        nargs="*",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Only rows whose --category-column equals one of these names "
+            "(e.g. ransac tls). Default: all categories in the CSV"
+        ),
+    )
+    p.add_argument(
         "--bin-error-confidence",
         type=float,
         default=0.95,
@@ -154,6 +205,17 @@ def main() -> None:
             f"have: {list(df.columns)[:20]}..."
         )
 
+    if args.regression_methods:
+        methods = list(args.regression_methods)
+        n_before = len(df)
+        df = df.loc[df[args.category_column].isin(methods)].reset_index(drop=True)
+        print(f"Filtered to {args.category_column} in {methods!r}: {len(df)} / {n_before} rows")
+        if df.empty:
+            raise ValueError("No rows left after --regression-methods filter")
+
+    plot_bin_points = bool(args.plot_bin_points or args.availability_bins_only)
+    plot_fit_line = not args.availability_bins_only
+
     avail_kw = dict(
         category_column=args.category_column,
         category_legend_title=args.legend_title,
@@ -162,9 +224,10 @@ def main() -> None:
         distance_max=args.distance_max,
         n_bins=args.n_bins,
         fit_poly_degree=args.fit_poly_degree,
+        plot_fit_line=plot_fit_line,
         availability_y_min=args.availability_y_min,
         availability_y_max=args.availability_y_max,
-        plot_bin_points=args.plot_bin_points,
+        plot_bin_points=plot_bin_points,
         bin_error_confidence=args.bin_error_confidence,
     )
 
@@ -218,6 +281,45 @@ def main() -> None:
                 **avail_kw,
             )
             plt.close("all")
+
+        if all(c in df.columns for c, _ in avail_specs):
+            bx, by, br = (
+                float(args.avail_delta_x_bound),
+                float(args.avail_delta_y_bound),
+                float(args.avail_delta_r_bound),
+            )
+            _add_combined_pixel_fail_column(df, bx, by, br)
+            rsfx = _distance_range_suffix(args.distance_min, args.distance_max)
+            combined_path = (
+                out_dir
+                / f"regression_availability_all_three_lt_{bx:g}_{by:g}_{br:g}_by_{args.category_column}.png"
+            )
+            # if plot_fit_line:
+            #     mode = f"quadratic fit, all |Δx|<{bx:g}, |Δy|<{by:g}, |Δr|<{br:g} px"
+            # else:
+            #     mode = (
+            #         f"bin % ± Wilson CI, all |Δx|<{bx:g}, |Δy|<{by:g}, |Δr|<{br:g} px"
+            #     )
+            mode = f"all |Δx|<{bx:g}, |Δy|<{by:g}, |Δr|<{br:g} px"
+            combined_title = (
+                f"Availability vs Range ({mode}){rsfx}"
+            )
+            combined_ylabel = (
+                "Availability (%)"
+            )
+            print(f"Writing {combined_path.name}...")
+            plot_column_availability_by_category(
+                df,
+                _COMBINED_PIXEL_FAIL_COL,
+                availability_bound=_COMBINED_AVAIL_SYNTHETIC_BOUND,
+                title=combined_title,
+                ylabel=combined_ylabel,
+                save_path=combined_path,
+                **avail_kw,
+            )
+            plt.close("all")
+        else:
+            print("Skip combined availability: missing one or more abs_delta_* columns")
 
     print("Done.")
     if args.show:
