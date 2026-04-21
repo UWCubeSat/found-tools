@@ -5,11 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "numpy>=2.0",
     "scipy>=1.16.3",
 ]
 
 [project.scripts]
 found-attitude = "found_CLI_tools.attitude.main:main"
+found-covariance = "found_CLI_tools.navigation_analysis.main:main"
 
 [dependency-groups]
 dev = ["pytest", "coverage"]
