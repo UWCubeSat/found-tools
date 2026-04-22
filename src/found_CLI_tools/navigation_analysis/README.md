@@ -143,4 +143,5 @@ The current `generic.py` file is the starting point for this work. The productio
    - The horizon points established in the image
    - The noise in each of the horizon points
 3. For the class, we should take in one argument which is a `std::unique_ptr` to
-   a CRA class.
+   a class representing the CRA. Then we can calculate A_C from the principal
+   axes and the Camera object in the CRA class.
