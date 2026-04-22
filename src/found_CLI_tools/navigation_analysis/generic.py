@@ -4,6 +4,8 @@ This module implements the residual/Jacobian/Fisher-information path used by the
 Christian generic case. The model is deliberately callback-driven: the caller
 supplies ``recompute_Mc(sc)`` so the covariance can be evaluated for arbitrary
 conic geometry.
+
+THIS IS TERRIBLE ONLY FOR POINTING OUT PROBLEMS IN UNDERSTANDING THE MODEL. DO NOT USE THIS IN PRODUCTION CODE.
 """
 
 from dataclasses import dataclass
