@@ -134,3 +134,13 @@ The current `generic.py` file is the starting point for this work. The productio
 - There should not be a supplied epsilon term. The "epsilon" that was generated
   here was a misinterpretation of the fact that we are interpreting the residuals
   as perturbations of the conic incidence equation.
+
+1. We need a class that computes the covariance matrix (generic case)
+2. This class should assume it's given all parameters needed, as we are not
+   making the pipeline, just the component. These parameters include:
+   - The shape matrix for the planetary body
+   - The position vector estimate
+   - The horizon points established in the image
+   - The noise in each of the horizon points
+3. For the class, we should take in one argument which is a `std::unique_ptr` to
+   a CRA class.
