@@ -38,7 +38,7 @@ def main():
 
     # Test 3: Import the navigation analysis module
     try:
-        from found_CLI_tools.navigation_analysis import main, model  # noqa: F401
+        from found_CLI_tools.navigation_analysis import parametric, parametric_model  # noqa: F401
 
         print("Navigation analysis module imported successfully")
     except ImportError as e:
@@ -66,7 +66,7 @@ def main():
 
     # Test 6: Check navigation analysis entry point exists
     try:
-        from found_CLI_tools.navigation_analysis import main as covariance_main
+        from found_CLI_tools.navigation_analysis import parametric as covariance_main
 
         assert callable(covariance_main)
         print("Covariance CLI entry point exists")

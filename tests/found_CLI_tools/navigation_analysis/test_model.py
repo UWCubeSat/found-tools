@@ -3,21 +3,17 @@ import unittest
 
 import numpy as np
 
-from found_CLI_tools.navigation_analysis.model import (
-    build_camera_frame_basis,
-    build_geometry_matrix,
-    compute_parametric_covariance,
-)
+from found_CLI_tools.navigation_analysis import parametric_model
 
 
 class ParametricCovarianceModelTest(unittest.TestCase):
     def test_build_camera_frame_basis_identity_case(self):
-        basis = build_camera_frame_basis([0.0, 0.0, 2.0], [0.0, 1.0, 0.0])
+        basis = parametric_model.build_camera_frame_basis([0.0, 0.0, 2.0], [0.0, 1.0, 0.0])
 
         np.testing.assert_allclose(basis, np.eye(3), atol=1e-12)
 
     def test_build_geometry_matrix_matches_excerpt(self):
-        geometry_matrix, denominator_d, theta_max_rad = build_geometry_matrix(
+        geometry_matrix, denominator_d, theta_max_rad = parametric_model.build_geometry_matrix(
             body_radius=1.0,
             slant_range=2.0,
             theta_max_deg=70.0,
@@ -37,7 +33,7 @@ class ParametricCovarianceModelTest(unittest.TestCase):
         np.testing.assert_allclose(geometry_matrix, expected_geometry_matrix, atol=1e-12)
 
     def test_compute_parametric_covariance_identity_basis(self):
-        covariance, diagnostics = compute_parametric_covariance(
+        covariance, diagnostics = parametric_model.compute_parametric_covariance(
             s_c=[0.0, 0.0, 2.0],
             u_c=[0.0, 1.0, 0.0],
             body_radius=1.0,
@@ -59,7 +55,7 @@ class ParametricCovarianceModelTest(unittest.TestCase):
 
     def test_compute_parametric_covariance_rejects_invalid_geometry(self):
         with self.assertRaises(ValueError):
-            compute_parametric_covariance(
+            parametric_model.compute_parametric_covariance(
                 s_c=[0.0, 0.0, 1.0],
                 u_c=[0.0, 1.0, 0.0],
                 body_radius=1.0,
