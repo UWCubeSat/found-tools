@@ -129,3 +129,8 @@ The current `generic.py` file is the starting point for this work. The productio
 - This model is more flexible than the parametric one, but it is also more numerical and more sensitive to noise in the Jacobian step.
 - The finite-difference step `eps` may need tuning for different conic models.
 - If you later have an analytical derivative for `M_c(sc)`, it can replace the finite-difference Jacobian for better accuracy and speed.
+
+### Errors
+- There should not be a supplied epsilon term. The "epsilon" that was generated
+  here was a misinterpretation of the fact that we are interpreting the residuals
+  as perturbations of the conic incidence equation.

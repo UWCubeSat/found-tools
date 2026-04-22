@@ -94,6 +94,9 @@ def compute_sigma2_list(
     return sigma2_list
 
 
+# This is incorrect. We have sc_hat which equals the actual sc plus some noise
+# delta sc. We are treating delta sc as the perturbation. The H_i falls out from
+# there.
 def compute_H_matrix(
     sc_hat: VectorLike,
     x_list: Sequence[VectorLike],
@@ -119,7 +122,8 @@ def compute_H_matrix(
 
     return jacobian
 
-
+# We do not need recompute_Mc. The Mc does not need to be recomputed as the
+# perturbations have *already* happened; that is the delta Sc term.
 def compute_P_sc(
     sc_hat: VectorLike,
     x_list: Sequence[VectorLike],
@@ -135,6 +139,7 @@ def compute_P_sc(
     sc_vec = _as_vector3(sc_hat)
     points = _as_point_list(x_list)
 
+    # Conic matrix is just M_c
     residuals, conic_matrix = compute_residuals(sc_vec, points, recompute_Mc)
     sigma2_list = compute_sigma2_list(conic_matrix, points, sigma_x)
     jacobian = compute_H_matrix(sc_vec, points, recompute_Mc, eps=eps)
