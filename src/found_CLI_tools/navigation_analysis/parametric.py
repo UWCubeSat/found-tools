@@ -4,8 +4,8 @@ import argparse
 
 import numpy as np
 
-from constants import DEFAULT_NUM_POINTS
-from parametric_model import compute_parametric_covariance
+from .constants import DEFAULT_NUM_POINTS
+from .parametric_model import compute_parametric_covariance
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

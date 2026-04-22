@@ -76,3 +76,56 @@ python .\found-tools\src\found_CLI_tools\navigation_analysis\main.py \
 - This implementation assumes valid geometric configuration (`slant_range > body_radius`).
 - The sun vector and position vector must be non-zero 3-vectors.
 - The matrix structure in the camera frame follows the textbook model and is symmetric.
+
+## Generic Covariance Model
+
+The generic case uses a different formulation from the parametric model. Instead of a closed-form geometry matrix, it builds the covariance from residuals of horizon points against a conic constraint.
+
+This is the right path when the horizon is not well represented by the parametric circular model, or when you already have a conic matrix model for the observed limb.
+
+### How the generic model works
+
+The generic implementation follows this flow:
+
+1. Evaluate residuals for each horizon point: `e_i = x_i^T M_c(sc) x_i`.
+2. Compute the residual variance for each point: `sigma_i^2 = 4 x_i^T M_c R_xbar M_c x_i`.
+3. Build the Jacobian `H` with respect to the 3-vector position estimate `s_c`.
+4. Accumulate Fisher information: `I = sum_i H_i^T sigma_i^-2 H_i`.
+5. Invert the Fisher matrix to get the covariance: `P_sc = I^-1`.
+
+### Inputs
+
+The generic model needs a different set of inputs than the parametric model:
+
+- `sc_hat`: Estimated position vector in camera coordinates.
+- `x_list`: Homogeneous horizon points, each a 3-vector.
+- `recompute_Mc(sc)`: Callback that returns the 3x3 conic matrix for a given `s_c`.
+- `sigma_x`: Image noise standard deviation.
+- `eps`: Finite-difference step for the Jacobian.
+
+### Diagnostics
+
+The generic path should return or expose diagnostics so the computation is auditable:
+
+- residuals per horizon point
+- residual variances `sigma_i^2`
+- Jacobian matrix `H`
+- Fisher information matrix `I`
+- Fisher condition number
+- the conic matrix used at the solution
+
+### Implementation plan for the generic case
+
+The current `generic.py` file is the starting point for this work. The production version should:
+
+1. Validate vector and matrix shapes before computing anything.
+2. Keep the callback-based `recompute_Mc(sc)` interface so different conic models can be plugged in.
+3. Return diagnostics alongside the covariance, like the parametric implementation does.
+4. Detect singular or ill-conditioned Fisher matrices before inversion.
+5. Add tests for residuals, Jacobians, Fisher assembly, and the failure path when the Fisher matrix is not invertible.
+
+### Practical notes
+
+- This model is more flexible than the parametric one, but it is also more numerical and more sensitive to noise in the Jacobian step.
+- The finite-difference step `eps` may need tuning for different conic models.
+- If you later have an analytical derivative for `M_c(sc)`, it can replace the finite-difference Jacobian for better accuracy and speed.
