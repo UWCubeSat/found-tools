@@ -148,8 +148,6 @@ def _point_on_visible_arc(
     x: float, y: float, rc: np.ndarray, k_inv: np.ndarray
 ) -> bool:
     """True if the ray through pixel (x, y) points away from Earth (sky side of limb).
-
-    Matches render logic: keep points where dot(ray, rc) <= 0.
     """
     ray = k_inv @ np.array([x, y, 1.0], dtype=np.float64)
     return float(np.dot(ray, -rc)) >= 0.0

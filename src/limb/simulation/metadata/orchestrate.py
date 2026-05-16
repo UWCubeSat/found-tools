@@ -267,7 +267,7 @@ def _calculate_conic_coeffs(
     }
 
 
-def setup_expirement(
+def setup_experiment(
     df: pd.DataFrame,
     semi_axes,
     earth_point_directions,
@@ -296,7 +296,6 @@ def setup_expirement(
 
     for tcp, sat_pos in zip(tcps, sat_positions):
         quat = R.from_matrix(tcp).as_quat()  # scipy order: x, y, z, w
-        # tcp_new = R.from_quat(quat).as_matrix()
         df = _fill_setup(
             df=df,
             camera=camera,
@@ -322,12 +321,12 @@ def _setup_simulation(
     """Build the simulation DataFrame (no I/O). Caller may write CSV or use in memory."""
     PIXEL_PITCH = 5e-6  # doesn't affect simulation as long as consistent
 
-    expirements = itertools.product(fovs, resolutions, distances)
+    experiments = itertools.product(fovs, resolutions, distances)
     df = initialize_sim_df()
     # earth_directions = generate_uniform_directions(num_earth_points)
     earth_directions = np.array([[0.0, 0.0, 1.0]])
 
-    for exp in expirements:
+    for exp in experiments:
         focal_length = focal_length_from_fov(
             fov=exp[0], resolution=exp[1], pixel_pitch=PIXEL_PITCH
         )
@@ -337,7 +336,7 @@ def _setup_simulation(
             x_resolution=exp[1],
             y_resolution=exp[1],
         )
-        df = setup_expirement(
+        df = setup_experiment(
             df,
             semi_axes,
             earth_directions,

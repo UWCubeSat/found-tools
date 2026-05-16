@@ -147,23 +147,6 @@ def save_image_worker(args):
     cv2.imwrite(path, img_uint8, [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
 
-def side_of_hyperbola(ptx, pty, A, B, C, D, E):
-    if not isinstance(ptx, torch.Tensor):
-        ptx = torch.from_numpy(ptx).to(A.device)
-    if not isinstance(pty, torch.Tensor):
-        pty = torch.from_numpy(pty).to(A.device)
-
-    # (h,k) is the hyperbola center
-    h = (B * E - 2 * C * D) / (4 * A * C - B * B + 0.0001)
-    k = (B * D - 2 * A * E) / (4 * A * C - B * B + 0.0001)
-    # this is the angle of the transverse axis
-    theta = torch.atan2(B, A - C) / 2
-    # we find the vector from the center to the centroid
-    x = ptx - h
-    y = pty - k
-    return torch.sign(y * torch.cos(-theta) - x * torch.sin(-theta))
-
-
 def process_simulation(
     coeffs_nx6,
     width,

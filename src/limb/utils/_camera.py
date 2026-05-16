@@ -5,8 +5,6 @@ helpers for building camera rotation and intrinsics matrices. Not usning FOUND c
 to avoid nonlinear dependencies.
 """
 
-import random
-
 import numpy as np
 import pandas as pd
 
@@ -60,8 +58,6 @@ class Camera:
 
     def _max_edge_angle(self):
         """Compute the maximum edge angle from the public parameters."""
-        # v = np.array([self.focal_length, self.min_image_dimension, 0.0], dtype=np.float64)
-        # min_image_direction = v / np.linalg.norm(v)
         return float(np.arctan(self.min_image_dimension / 2 / self.focal_length))
 
     def _calibration_matrix(self):
@@ -104,13 +100,6 @@ class Camera:
         homogenous_image = np.array([1.0, y / x, z / x], dtype=np.float64)
         homogenous_pixel = self.calibration_matrix @ homogenous_image
         return homogenous_pixel[:2]
-
-    def edge_angle(self) -> float:
-        """Return an edge angle using the constructor-selected strategy."""
-        if self.edge_angle_mode == "randomized":
-            return random.uniform(0.0, self.image_max_edge_angle)
-        return 0.0
-
 
 def focal_length_from_fov(fov: float, resolution: int, pixel_pitch: float) -> float:
     """Compute focal length from field of view.

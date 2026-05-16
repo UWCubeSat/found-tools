@@ -62,7 +62,7 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
     Parameters
     ----------
     df : pd.DataFrame
-        Simulation DataFrame from orchestrate (initialize_sim_df / setup_expirement).
+        Simulation DataFrame from orchestrate (initialize_sim_df / setup_experiment).
         Must contain pose, camera intrinsics, and shape columns.
 
     Returns
@@ -83,9 +83,9 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
     for idx, row in df.iterrows():
             camera, _, tpc, rc = _row_to_pose(row)
             radius = float(row["shape_axis_a"])
-            camera_to_earth_origing = np.array([abs(rc[0]), -rc[1], -rc[2]], dtype=np.float64)
+            camera_to_earth_origin = np.array([abs(rc[0]), -rc[1], -rc[2]], dtype=np.float64)
             # Calculate true metrics
-            px, py = camera.camera_to_pixel(camera_to_earth_origing)
+            px, py = camera.camera_to_pixel(camera_to_earth_origin)
             df.at[idx, "true_x_centroid"] = px
             df.at[idx, "true_y_centroid"] = py
             df.at[idx, "true_r_apparent"] = apparent_radius_pixels(rc, radius, camera)
@@ -98,11 +98,11 @@ def fill_pixel_metrics(df: pd.DataFrame) -> pd.DataFrame:
                     dtype=np.float64,
                 )
                 rc_out = np.ravel(np.asarray(tpc @ out_vec, dtype=np.float64))
-                camera_to_earth_origing_out = np.array(
+                camera_to_earth_origin_out = np.array(
                     [abs(rc_out[0]), -rc_out[1], -rc_out[2]],
                     dtype=np.float64,
                 )
-                ox, oy = camera.camera_to_pixel(camera_to_earth_origing_out)
+                ox, oy = camera.camera_to_pixel(camera_to_earth_origin_out)
                 df.at[idx, "out_x_centroid"] = float(ox)
                 df.at[idx, "out_y_centroid"] = float(oy)
                 out_r = apparent_radius_pixels(rc_out, radius, camera)

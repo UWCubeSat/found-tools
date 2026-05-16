@@ -17,7 +17,7 @@ htmlcov/
 *.png
 
 # Debugging files
-.vscode/*
+.vscode/
 launch.json
 
 # Virtual environments

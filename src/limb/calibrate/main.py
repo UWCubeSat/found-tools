@@ -144,7 +144,7 @@ def output_result(
     # Define constants
 
     LF = "\n"
-    SECTION_SEPERATOR = LF + LF
+    SECTION_SEPARATOR = LF + LF
     SLASHLF = "\\" + LF
 
     # Define output functions
@@ -209,7 +209,7 @@ def output_result(
     print(f"{LF}{CALIBRATION_BANNER}", LF)
     print_attitude(CALIBRATION_HEADER, calibration_attitude)
     print_attitudes(*calibration_attitudes)
-    print(CALIBRATION_COMMAND, SECTION_SEPERATOR)
+    print(CALIBRATION_COMMAND, SECTION_SEPARATOR)
 
     # Step 4b: Print all other Steps
     print(DISTANCE_BANNER, LF)
@@ -218,7 +218,7 @@ def output_result(
         print_attitudes(loc_attitude, ref_attitude)
         print_distance_commands(loc_attitude, ref_attitude)
         if i != len(test_attitudes) - 1:
-            print(SECTION_SEPERATOR)
+            print(SECTION_SEPARATOR)
         else:
             print()
 

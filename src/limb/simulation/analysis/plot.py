@@ -18,11 +18,8 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import MaxNLocator
 from scipy import stats
 from scipy.optimize import curve_fit
-from scipy.spatial import cKDTree
-
 from limb.simulation.analysis.metrics import (
     column_summary,
-    fill_pixel_metrics,
     horizontal_fov_deg_from_row,
     split_df_by_camera,
     split_df_by_column_value,
@@ -33,25 +30,11 @@ from limb.simulation.analysis.metrics import (
 _CAMERA_KEY_COLS = ("cam_focal_length", "cam_x_resolution", "cam_y_resolution")
 
 
-def _hyper3(x: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
-    """Three-parameter rectangular hyperbola: a + b / (x + c). Requires x + c > 0."""
-    return a + b / (x + c)
-
-
 def _softplus(x: np.ndarray, beta: float, m: float, b: float, L: float) -> np.ndarray:
     """L + (1/β) log(1 + exp(β (m x + b))); stable for :func:`scipy.optimize.curve_fit`."""
     x = np.asarray(x, dtype=np.float64)
     u = np.clip(float(beta) * (float(m) * x + float(b)), -700.0, 700.0)
     return float(L) + (1.0 / float(beta)) * np.log1p(np.exp(u))
-
-
-def _camera_id_from_row(row: pd.Series) -> tuple[float, int, int]:
-    """Unique camera identifier from a metadata row."""
-    return (
-        float(row["cam_focal_length"]),
-        int(row["cam_x_resolution"]),
-        int(row["cam_y_resolution"]),
-    )
 
 
 def _camera_label(cam_id: tuple[float, int, int]) -> str:

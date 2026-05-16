@@ -140,7 +140,7 @@ def generate_satellite_state(
                   satellites are always outside the ellipsoid body.
         cameraClass: Camera object with focal length, resolution, and edge-offset properties.
         numSatellitePositions: Number of positions around the tangent plane.
-        numSatelliteOrientations: Number of orientations per position (boresight angles).
+        numImageSpins: Number of spin orientations per position (boresight angles).
     Returns:
         Tuple[np.ndarray, np.ndarray]: Satellite positions (shape numSatellitePositions, 3)
         and orientations (shape numSatelliteOrientations × numSatellitePositions, 3, 3).
@@ -156,7 +156,7 @@ def generate_satellite_state(
 
     tcps = r_tcps.as_matrix()
 
-    oreintation_final = []
+    orientation_final = []
     for tcp in tcps:
         spin_radial_orientations = []
         spins = np.linspace(0, 2 * np.pi, numImageSpins, endpoint=False)
@@ -167,8 +167,8 @@ def generate_satellite_state(
             )
             spin_radial_boresight = _rotate_basis(basis, basis[:, 1], radials)
             spin_radial_orientations.extend(spin_radial_boresight)
-        oreintation_final.extend(spin_radial_orientations)
+        orientation_final.extend(spin_radial_orientations)
 
     return sat_positions.repeat(numImageSpins * numImageRadials, axis=0), np.array(
-        oreintation_final
+        orientation_final
     )
