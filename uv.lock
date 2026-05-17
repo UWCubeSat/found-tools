@@ -221,6 +221,7 @@ version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
+    { name = "numpy" },
     { name = "opencv-python" },
     { name = "pandas" },
     { name = "scipy" },
@@ -237,6 +238,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", specifier = ">=3.10" },
+    { name = "numpy", specifier = ">=2.0" },
     { name = "opencv-python", specifier = ">=4.13.0.92" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "scipy", specifier = ">=1.16.3" },

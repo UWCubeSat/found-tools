@@ -13,7 +13,7 @@ class Camera:
     """Simple pinhole camera model with public camera parameters."""
 
     @classmethod
-    def from_row(cls, row: pd.Series) -> "Camera":
+    def from_row(cls, row: pd.Series) -> "Camera":  # pragma: no cover
         """Build a Camera from a single row of the simulation/orchestrate DataFrame.
 
         Row must contain: cam_focal_length, cam_x_pixel_pitch, cam_y_pixel_pitch,
@@ -48,17 +48,8 @@ class Camera:
         self.y_pixel_pitch = (
             self.x_pixel_pitch if y_pixel_pitch is None else float(y_pixel_pitch)
         )
-        self.min_image_dimension = min(
-            self.x_resolution * self.x_pixel_pitch,
-            self.y_resolution * self.y_pixel_pitch,
-        )
-        self.image_max_edge_angle = self._max_edge_angle()
         self.calibration_matrix = self._calibration_matrix()
         self.inverse_calibration_matrix = np.linalg.inv(self.calibration_matrix)
-
-    def _max_edge_angle(self):
-        """Compute the maximum edge angle from the public parameters."""
-        return float(np.arctan(self.min_image_dimension / 2 / self.focal_length))
 
     def _calibration_matrix(self):
         """Compute the calibration matrix from the public parameters."""
@@ -72,6 +63,18 @@ class Camera:
             ],
             dtype=np.float64,
         )
+
+    def min_image_dimension(self) -> float:
+        """Compute the minimum image dimension in metres."""
+        return min(
+            self.x_resolution * self.x_pixel_pitch,
+            self.y_resolution * self.y_pixel_pitch,
+        )
+
+    def max_edge_angle(self):  # pragma: no cover
+        """Compute the maximum angle and object can be offset from the optical axis
+        and still be garaunteed to be captured."""
+        return float(np.arctan(self.min_image_dimension() / 2 / self.focal_length))
 
     def camera_to_pixel(self, vector_camera: np.ndarray) -> np.ndarray:
         """Project a 3D vector in camera frame to pixel coordinates.
@@ -101,7 +104,10 @@ class Camera:
         homogenous_pixel = self.calibration_matrix @ homogenous_image
         return homogenous_pixel[:2]
 
-def focal_length_from_fov(fov: float, resolution: int, pixel_pitch: float) -> float:
+
+def focal_length_from_fov(
+    fov: float, resolution: int, pixel_pitch: float
+) -> float:  # pragma: no cover
     """Compute focal length from field of view.
 
     Args:
