@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from limb.utils._camera import Camera
+from found_tools.utils._camera import Camera
 
 MATRIX_INVERSE_TOL = 1e-9
 

@@ -1,5 +1,5 @@
 [project]
-name = "limb"
+name = "found-tools"
 version = "0.0.0"
 description = "Add your description here"
 readme = "README.md"
@@ -15,8 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-limb_attitude = "limb.calibrate.main:main"
-limb_simulation = "limb.simulation.main:main"
+found_tools_attitude = "found_tools.calibrate.main:main"
 
 [dependency-groups]
 dev = ["pytest", "coverage"]
