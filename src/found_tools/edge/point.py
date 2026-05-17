@@ -1,8 +1,8 @@
-
 import numpy as np
 
 from found_tools.utils._camera import Camera
-    
+
+
 def _solve_conic(
     cc: np.ndarray,
     x: float | None = None,
@@ -40,7 +40,7 @@ def _solve_conic(
 
     if x is not None:
         P, Q, R = c, b * x + e, a * x**2 + d * x + f
-    else:
+    elif y is not None:
         P, Q, R = a, b * y + d, c * y**2 + e * y + f
 
     def _make(val: float) -> np.ndarray:
@@ -96,13 +96,15 @@ def solve_point(
     """
     k_inv = camera.inverse_calibration_matrix
     return [
-        pt for pt in _solve_conic(cc, x=x, y=y, eps=eps)
+        pt
+        for pt in _solve_conic(cc, x=x, y=y, eps=eps)
         if (
             0 <= float(pt[0]) < camera.x_resolution
             and 0 <= float(pt[1]) < camera.y_resolution
             and _point_on_visible_arc(float(pt[0]), float(pt[1]), rc, k_inv)
         )
     ]
+
 
 def _point_on_visible_arc(
     x: float, y: float, rc: np.ndarray, k_inv: np.ndarray
@@ -135,6 +137,7 @@ def _point_on_visible_arc(
     ray = k_inv @ np.array([x, y, 1.0], dtype=np.float64)
     return float(np.dot(ray, -rc)) >= 0.0
 
+
 def sort_points_polar_order(points: np.ndarray) -> np.ndarray:
     """Sort (N, 2) pixel points by angle around their centroid for drawing a closed contour.
 
@@ -153,6 +156,7 @@ def sort_points_polar_order(points: np.ndarray) -> np.ndarray:
     angles = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
     order = np.argsort(angles)
     return pts[order].copy()
+
 
 def _limit_points_per_pixel(
     points: list[np.ndarray], edge_per_pixel: int
@@ -181,7 +185,12 @@ def _limit_points_per_pixel(
 
 
 def generate_edge_points(
-    cc: np.ndarray, camera: Camera, rc: np.ndarray, center: float = 0.5, step: float = 1.0, edge_per_pixel: int = 1
+    cc: np.ndarray,
+    camera: Camera,
+    rc: np.ndarray,
+    center: float = 0.5,
+    step: float = 1.0,
+    edge_per_pixel: int = 1,
 ) -> np.ndarray:
     """Sample the conic at every row and column; return visible in-image points.
 
