@@ -5,11 +5,17 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "matplotlib>=3.10",
+    "numpy>=2.0",
+    "opencv-python>=4.13.0.92",
+    "pandas>=3.0.1",
     "scipy>=1.16.3",
+    "torch>=2.10.0",
+    "tqdm>=4.67.3",
 ]
 
 [project.scripts]
-found-attitude = "found_CLI_tools.attitude.main:main"
+found_tools_attitude = "found_tools.calibrate.main:main"
 
 [dependency-groups]
 dev = ["pytest", "coverage"]
