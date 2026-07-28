@@ -1,6 +1,6 @@
 import argparse
 import logging
-from typing import Tuple, List, Optional
+from typing import Tuple, List
 
 from found_tools.calibrate.constants import (
     CALIBRATION_BANNER,
@@ -72,12 +72,12 @@ def parse_args() -> Tuple[DCM, DCM, int]:  # pragma: no cover
 
 
 def validate_arguments(
-    local_attitude: Optional[DCM], calibration_attitude: DCM, num_attitude_pairs: int
+    local_attitude: DCM, calibration_attitude: DCM, num_attitude_pairs: int
 ):
     """Validates the arguments
 
     Args:
-        local_attitude (Optional[DCM]): The local attitude to use in the first test pair
+        local_attitude (DCM): The local attitude to use in the first test pair
         calibration_attitude (DCM): The calibration rotation
         num_attitude_pairs (int): The number of test attitude pairs to generate
     """
@@ -88,12 +88,12 @@ def validate_arguments(
 
 
 def produce_attitudes(
-    local_attitude: Optional[DCM], calibration_attitude: DCM, num_attitude_pairs: int
+    local_attitude: DCM, calibration_attitude: DCM, num_attitude_pairs: int
 ) -> Tuple[Tuple[DCM, DCM], List[Tuple[DCM, DCM]]]:
     """Produces the attitudes to use with FOUND and tools.generator
 
     Args:
-        local_attitude (Optional[DCM]): The local attitude to use in the first test pair
+        local_attitude (DCM): The local attitude to use in the first test pair
         calibration_attitude (DCM): The calibration rotation
         num_attitude_pairs (int): The number of test attitude pairs to generate
 
