@@ -1,6 +1,6 @@
 [project]
 name = "found-tools"
-version = "0.0.0"
+version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 found_tools_attitude = "found_tools.calibrate.main:main"
+found_tools_render = "found_tools.render.main:main"
 
 [dependency-groups]
 dev = ["pytest", "coverage"]
@@ -25,6 +26,10 @@ source = ["src"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
+    # bpy is Blender's bundled Python module, not installable for this
+    # project's Python version; this file runs inside Blender's own
+    # interpreter and cannot be exercised by the test suite.
+    "*/found_tools/render/blender_scene.py",
 ]
 
 [tool.coverage.report]
