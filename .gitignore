@@ -13,6 +13,7 @@ htmlcov/
 .coverage
 
 # simulation output
+scripts/
 *.csv
 *.png
 
