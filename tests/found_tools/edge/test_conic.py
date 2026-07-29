@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 
 from found_tools.edge.conic import (
+    _shape_matrix_from_axes,
+    conic_matrix_to_coeffs,
     generate_camera_conic,
     generate_pixel_conic,
-    conic_matrix_to_coeffs,
-    _shape_matrix_from_axes,
 )
 from found_tools.utils._camera import Camera
 

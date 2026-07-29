@@ -13,7 +13,7 @@ class Camera:
     """Simple pinhole camera model with public camera parameters."""
 
     @classmethod
-    def from_row(cls, row: pd.Series) -> "Camera":  # pragma: no cover
+    def from_row(cls, row: pd.Series) -> Camera:  # pragma: no cover
         """Build a Camera from a single row of the simulation/orchestrate DataFrame.
 
         Row must contain: cam_focal_length, cam_x_pixel_pitch, cam_y_pixel_pitch,

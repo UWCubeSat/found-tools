@@ -1,21 +1,19 @@
 import argparse
 import logging
-from typing import Tuple, List
 
 from found_tools.calibrate.constants import (
     CALIBRATION_BANNER,
-    DISTANCE_BANNER,
     CALIBRATION_HEADER,
+    DISTANCE_BANNER,
     LOCAL_HEADER,
     REFERENCE_HEADER,
 )
-
-from found_tools.calibrate.transform import Attitude, DCM
+from found_tools.calibrate.transform import DCM, Attitude
 
 logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s]: %(message)s")
 
 
-def parse_args() -> Tuple[DCM, DCM, int]:  # pragma: no cover
+def parse_args() -> tuple[DCM, DCM, int]:  # pragma: no cover
     """Parse Arguments for the tool
 
     Args:
@@ -89,7 +87,7 @@ def validate_arguments(
 
 def produce_attitudes(
     local_attitude: DCM, calibration_attitude: DCM, num_attitude_pairs: int
-) -> Tuple[Tuple[DCM, DCM], List[Tuple[DCM, DCM]]]:
+) -> tuple[tuple[DCM, DCM], list[tuple[DCM, DCM]]]:
     """Produces the attitudes to use with FOUND and tools.generator
 
     Args:
@@ -111,7 +109,7 @@ def produce_attitudes(
     calibration_attitudes = local_attitude_cal, reference_attitude_cal
 
     # Step 3: Produce the Test Attitudes
-    test_attitudes = list()
+    test_attitudes = []
 
     # Step 3a: Handle the First Test Attitude Differently if we are given a local attitude
     loc_attitude = local_attitude
@@ -131,8 +129,8 @@ def produce_attitudes(
 
 def output_result(
     calibration_dcm: DCM,
-    calibration_dcms: Tuple[DCM, DCM],
-    test_dcms: List[Tuple[DCM, DCM]],
+    calibration_dcms: tuple[DCM, DCM],
+    test_dcms: list[tuple[DCM, DCM]],
 ):
     """Outputs the results
 

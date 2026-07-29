@@ -40,7 +40,7 @@ def main():
 
     # Test 4: Import key classes
     try:
-        from found_tools.calibrate.transform import Attitude, DCM  # noqa: F401
+        from found_tools.calibrate.transform import DCM, Attitude  # noqa: F401
 
         print("Core classes imported successfully")
     except ImportError as e:
