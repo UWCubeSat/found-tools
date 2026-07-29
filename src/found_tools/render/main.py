@@ -1,19 +1,16 @@
 import argparse
 import logging
-import shutil
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 
 from found_tools.calibrate.transform import Attitude
+from found_tools.render.blender_scene import render_scene
 from found_tools.render.scene import build_scene, write_scene
 from found_tools.utils._camera import Camera
 
 logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s]: %(message)s")
-
-BLENDER_SCRIPT = Path(__file__).with_name("blender_scene.py")
 
 
 def parse_args() -> argparse.Namespace:  # pragma: no cover
@@ -75,16 +72,11 @@ def parse_args() -> argparse.Namespace:  # pragma: no cover
         help="Where to write the intermediate scene JSON. Defaults next to --output.",
     )
     parser.add_argument(
-        "--blender-executable",
-        default="blender",
-        help="Path to the Blender executable. Defaults to 'blender' on PATH.",
-    )
-    parser.add_argument(
         "--render",
         action="store_true",
-        help="Invoke Blender to render the scene. If omitted, only the "
-        "scene JSON is written (useful for inspecting geometry without "
-        "requiring a Blender install).",
+        help="Render the scene with Blender's bpy module. If omitted, only "
+        "the scene JSON is written (useful for inspecting geometry without "
+        "waiting on a render).",
     )
 
     return parser.parse_args()
@@ -136,55 +128,13 @@ def resolve_scene_file(args: argparse.Namespace) -> Path:
     return Path(args.output).with_suffix(".scene.json")
 
 
-def invoke_blender(
-    blender_executable: str, scene_file: Path, output: Path
-) -> subprocess.CompletedProcess:  # pragma: no cover
-    """Invokes Blender in headless mode to render the given scene.
-
-    Args:
-        blender_executable: Path to (or name of) the Blender executable.
-        scene_file: Path to the scene JSON written by :func:`write_scene`.
-        output: Path to write the rendered image to.
-
-    Returns:
-        subprocess.CompletedProcess: The completed Blender invocation.
-
-    Raises:
-        FileNotFoundError: If the Blender executable cannot be found.
-    """
-    if (
-        shutil.which(blender_executable) is None
-        and not Path(blender_executable).is_file()
-    ):
-        raise FileNotFoundError(
-            f"Blender executable '{blender_executable}' not found. Install "
-            "Blender (https://www.blender.org/download/) or pass "
-            "--blender-executable."
-        )
-
-    return subprocess.run(
-        [
-            blender_executable,
-            "--background",
-            "--python",
-            str(BLENDER_SCRIPT),
-            "--",
-            "--scene",
-            str(scene_file),
-            "--output",
-            str(output),
-        ],
-        check=True,
-    )
-
-
 def main():  # pragma: no cover
     args = parse_args()
     scene = build_scene_from_args(args)
-    scene_file = write_scene(scene, resolve_scene_file(args))
+    write_scene(scene, resolve_scene_file(args))
 
     if args.render:
-        invoke_blender(args.blender_executable, scene_file, Path(args.output))
+        render_scene(scene, Path(args.output))
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -5,6 +5,8 @@ helpers for building camera rotation and intrinsics matrices. Not usning FOUND c
 to avoid nonlinear dependencies.
 """
 
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 

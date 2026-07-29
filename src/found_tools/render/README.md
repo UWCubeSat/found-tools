@@ -17,13 +17,14 @@ softening.
    (reusing `found_tools.utils.Camera`), camera pose, and date-appropriate
    texture filenames into a scene JSON file.
 3. `found_tools.render.main` (the `found_tools_render` CLI) writes the
-   scene JSON and, if `--render` is passed, invokes Blender in headless
-   mode (`blender --background --python blender_scene.py`) to build and
+   scene JSON and, if `--render` is passed, calls
+   `found_tools.render.blender_scene.render_scene` in process to build and
    render the scene.
 4. `found_tools.render.blender_scene` is the only module that imports
-   `bpy`. It runs inside Blender's own bundled Python interpreter (not the
-   project's virtualenv -- see "Rendering" below) and is not covered by
-   the unit test suite.
+   `bpy` (Blender as a Python module, a project dependency). It can also be
+   run standalone inside a full Blender install
+   (`blender --background --python blender_scene.py`) if you need Blender's
+   own bundled interpreter instead.
 
 ## Textures
 
@@ -48,9 +49,9 @@ installed:
 ```bash
 found_tools_render \
   --date 2026-03-20T12:00:00 \
-  --position 7000000 0 0 \
-  --attitude 45 0 0 \
-  --focal-length 0.05 \
+  --position 25000000 0 0 \
+  --attitude 180 0 0 \
+  --focal-length 0.008 \
   --pixel-pitch 5e-6 \
   --x-resolution 1920 \
   --y-resolution 1080 \
@@ -60,26 +61,41 @@ found_tools_render \
 
 ### Rendering
 
-`bpy` (Blender as a Python module) is not published for this project's
-Python version, so it is not a dependency of `found-tools`. Instead, add
-`--render` and point `--blender-executable` at a real Blender install; the
-CLI shells out to Blender's own bundled Python to run
-`blender_scene.py`:
+`bpy` (Blender as a Python module) is a project dependency, so add
+`--render` to actually build and render the scene -- no separate Blender
+install is required:
 
 ```bash
 found_tools_render \
   --date 2026-03-20T12:00:00 \
-  --position 7000000 0 0 \
-  --attitude 45 0 0 \
-  --focal-length 0.05 \
+  --position 25000000 0 0 \
+  --attitude 180 0 0 \
+  --focal-length 0.008 \
   --pixel-pitch 5e-6 \
   --x-resolution 1920 \
   --y-resolution 1080 \
   --texture-dir ./textures \
   --output render.png \
-  --render \
-  --blender-executable /path/to/blender
+  --render
 ```
+
+### Choosing camera parameters
+
+`--position`, `--focal-length`, `--pixel-pitch`, and `--x/y-resolution`
+must be consistent with each other, or the render can come out looking
+like an unrecognizable, blurry close-up instead of a visible Earth disk.
+The camera's field of view is set by focal length and sensor size
+(`resolution * pixel_pitch`), same as a real camera; if that FOV is much
+narrower than the Earth's angular size at the requested `--position`
+(`2 * asin(6378137 / distance_from_earth_center_m)`), the camera is
+effectively a telephoto lens pointed at a patch of the surface a few
+kilometers wide, magnified to fill the whole frame -- the "blurry mess"
+you'd expect from zooming a real photo in far past its resolution. Widen
+the lens (shorter `--focal-length` and/or larger `--pixel-pitch`), move
+`--position` farther out, or both, until the FOV comfortably exceeds the
+Earth's angular size at that distance. The example above (25,000 km
+altitude, an 8 mm-equivalent lens) puts the full Earth disk in frame with
+margin.
 
 ## Flags
 
@@ -94,7 +110,5 @@ found_tools_render \
 - `--output`: Path to write the rendered PNG to.
 - `--scene-file`: Where to write the intermediate scene JSON (defaults
   next to `--output`).
-- `--blender-executable`: Path to the Blender executable (default:
-  `blender` on `PATH`).
-- `--render`: Actually invoke Blender. Without it, only the scene JSON is
-  written.
+- `--render`: Actually build and render the scene with `bpy`. Without it,
+  only the scene JSON is written.

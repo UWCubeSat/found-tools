@@ -1,10 +1,9 @@
-"""Builds and renders the synthetic Earth scene inside Blender.
+"""Builds and renders the synthetic Earth scene using Blender's ``bpy`` module.
 
-This is the only module in the render tool that imports ``bpy``. It is not
-part of the ``found_tools`` package's normal import graph and is not
-exercised by the test suite (``bpy`` is Blender's bundled interpreter
-module and is not installable for the project's supported Python version --
-see the render tool README for how to run this script). It is invoked as:
+This is the only module in the render tool that imports ``bpy``.
+:func:`found_tools.render.main.main` calls :func:`render_scene` directly, in
+process. This module can also be run standalone inside a full Blender
+install:
 
     blender --background --python blender_scene.py -- --scene scene.json --output render.png
 
@@ -16,13 +15,20 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
+
 import bpy  # ty: ignore[unresolved-import]
 
 EARTH_RADIUS_M = 6_378_137.0
 CLOUD_LAYER_ALTITUDE_M = 10_000.0
+# Atmosphere shell radius as a fraction of the Earth radius. Earth's
+# atmosphere is optically significant to roughly the stratopause (~50 km),
+# i.e. under 1% of the Earth's radius; a few percent gives a visible glow
+# without the shell reading as a separate, oversized sphere.
+ATMOSPHERE_RADIUS_SCALE = 1.02
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> argparse.Namespace:  # pragma: no cover
     """Parses the arguments passed after Blender's own ``--`` separator."""
     argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
 
@@ -42,7 +48,8 @@ def reset_scene() -> None:
 
 
 def add_earth(scene: dict) -> None:
-    """Adds the Earth sphere, textured with Blue Marble and a cloud layer."""
+    """Adds the Earth sphere, textured with Blue Marble and, if the cloud
+    texture file exists in texture_dir, a cloud layer."""
     texture_dir = Path(scene["earth"]["texture_dir"])
 
     bpy.ops.mesh.primitive_uv_sphere_add(
@@ -50,6 +57,13 @@ def add_earth(scene: dict) -> None:
     )
     earth = bpy.context.active_object
     earth.name = "Earth"
+    # primitive_uv_sphere_add's mesh is flat-shaded by default: every quad
+    # face has one constant normal, so despite the 256x128 subdivision the
+    # regular lat/long face grid shows up as a faint but very regular
+    # checkerboard of brightness steps wherever shading is smooth and
+    # low-contrast (e.g. open ocean near the terminator). Smooth-shade so
+    # normals are interpolated across faces instead.
+    bpy.ops.object.shade_smooth()
 
     earth_material = bpy.data.materials.new(name="EarthMaterial")
     earth_material.use_nodes = True
@@ -63,21 +77,24 @@ def add_earth(scene: dict) -> None:
     )
     earth.data.materials.append(earth_material)
 
+    cloud_layer_path = texture_dir / scene["earth"]["cloud_layer_filename"]
+    if not cloud_layer_path.is_file():
+        return
+
     cloud_radius = EARTH_RADIUS_M + CLOUD_LAYER_ALTITUDE_M
     bpy.ops.mesh.primitive_uv_sphere_add(
         radius=cloud_radius, segments=256, ring_count=128
     )
     clouds = bpy.context.active_object
     clouds.name = "CloudLayer"
+    bpy.ops.object.shade_smooth()
 
     cloud_material = bpy.data.materials.new(name="CloudMaterial")
     cloud_material.use_nodes = True
     cloud_material.blend_method = "BLEND"
     cloud_bsdf = cloud_material.node_tree.nodes["Principled BSDF"]
     cloud_tex = cloud_material.node_tree.nodes.new("ShaderNodeTexImage")
-    cloud_tex.image = bpy.data.images.load(
-        str(texture_dir / scene["earth"]["cloud_layer_filename"])
-    )
+    cloud_tex.image = bpy.data.images.load(str(cloud_layer_path))
     cloud_material.node_tree.links.new(
         cloud_bsdf.inputs["Alpha"], cloud_tex.outputs["Color"]
     )
@@ -108,14 +125,59 @@ def add_sun(scene: dict) -> None:
 
 
 def add_atmosphere() -> None:
-    """Enables Blender's Nishita sky texture for limb glow / terminator softening."""
-    world = bpy.data.worlds.new("AtmosphereWorld")
+    """Adds a limb-glow shell around the Earth and a black deep-space background.
+
+    An earlier version of this function used Blender's Sky Texture node
+    (Nishita / Multiple Scattering) as the World background. That node
+    models a ground-level sky dome as seen by an observer standing on the
+    Earth's surface -- as a World background it lights the *entire*
+    background sphere in every direction (not just near the Earth's limb)
+    with its own bright, independent sun disc unrelated to this scene's
+    Sun lamp, which is what was blowing out half the frame to white.
+
+    Instead: keep the World background black (deep space) and fake the
+    atmosphere with a Fresnel-driven emission shader on a shell slightly
+    larger than the Earth mesh. Fresnel makes the glow strongest at grazing
+    viewing angles -- i.e. right at the limb -- and fall off to transparent
+    toward the center of the visible disk, which is the actual effect we
+    want for limb-glow/terminator softening in a from-space view.
+    """
+    world = bpy.data.worlds.new("SpaceWorld")
     bpy.context.scene.world = world
     world.use_nodes = True
-    sky_texture = world.node_tree.nodes.new("ShaderNodeTexSky")
-    sky_texture.sky_type = "NISHITA"
     background = world.node_tree.nodes["Background"]
-    world.node_tree.links.new(background.inputs["Color"], sky_texture.outputs["Color"])
+    background.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        radius=EARTH_RADIUS_M * ATMOSPHERE_RADIUS_SCALE, segments=256, ring_count=128
+    )
+    shell = bpy.context.active_object
+    shell.name = "Atmosphere"
+    bpy.ops.object.shade_smooth()
+
+    material = bpy.data.materials.new(name="AtmosphereMaterial")
+    material.use_nodes = True
+    material.blend_method = "BLEND"
+    material.show_transparent_back = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+
+    output = nodes.new("ShaderNodeOutputMaterial")
+    mix_shader = nodes.new("ShaderNodeMixShader")
+    transparent = nodes.new("ShaderNodeBsdfTransparent")
+    emission = nodes.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = (0.35, 0.55, 1.0, 1.0)
+    emission.inputs["Strength"].default_value = 2.5
+    fresnel = nodes.new("ShaderNodeFresnel")
+    fresnel.inputs["IOR"].default_value = 1.2
+
+    links.new(fresnel.outputs["Fac"], mix_shader.inputs["Fac"])
+    links.new(transparent.outputs["BSDF"], mix_shader.inputs[1])
+    links.new(emission.outputs["Emission"], mix_shader.inputs[2])
+    links.new(mix_shader.outputs["Shader"], output.inputs["Surface"])
+
+    shell.data.materials.append(material)
 
 
 def add_camera(scene: dict) -> None:
@@ -131,6 +193,14 @@ def add_camera(scene: dict) -> None:
     cam_data.sensor_fit = "HORIZONTAL"
     cam_data.sensor_width = cam["x_resolution"] * cam["x_pixel_pitch_m"] * 1000.0
     cam_data.sensor_height = cam["y_resolution"] * cam["y_pixel_pitch_m"] * 1000.0
+
+    # Blender's default 1000m far-clip plane is far smaller than this
+    # scene's ECEF scale (Earth radius alone is ~6.4e6 m), which silently
+    # clips the whole Earth out of the render. Give it enough headroom for
+    # any orbit up to well past GEO.
+    camera_altitude_m = float(np.linalg.norm(cam["position_ecef_m"]))
+    cam_data.clip_start = 1.0
+    cam_data.clip_end = 4.0 * max(EARTH_RADIUS_M, camera_altitude_m)
 
     render = bpy.context.scene.render
     render.resolution_x = scene["image"]["width"]
@@ -155,22 +225,44 @@ def render(output_path: Path) -> None:
     """Configures render settings and renders the scene to ``output_path``."""
     render_settings = bpy.context.scene.render
     render_settings.engine = "CYCLES"
-    render_settings.filepath = str(output_path)
+    # Blender resolves relative paths against the current .blend file, which
+    # doesn't exist here, so always pass it an absolute path.
+    render_settings.filepath = str(Path(output_path).resolve())
     render_settings.image_settings.file_format = "PNG"
+    # AgX (Blender's default) is a filmic tone-mapping curve meant for a
+    # cinematic look; it non-linearly recolors pixels, which is undesirable
+    # for a tool generating test imagery for attitude-determination software.
+    bpy.context.scene.view_settings.view_transform = "Standard"
+    # Blender's default of 4096 samples is tuned for offline cinematic
+    # rendering and is impractically slow for a CLI tool; this scene has no
+    # fine geometric detail (a couple of textured spheres and a sky), so a
+    # much lower sample count plus the OIDN denoiser is enough to converge.
+    bpy.context.scene.cycles.samples = 128
+    bpy.context.scene.cycles.use_denoising = True
     bpy.ops.render.render(write_still=True)
 
 
-def main() -> None:
-    args = parse_args()
-    scene = json.loads(Path(args.scene).read_text())
+def render_scene(scene: dict, output_path: Path) -> None:
+    """Builds and renders a full scene from a scene description dict.
 
+    Args:
+        scene: The scene description, as produced by
+            :func:`found_tools.render.scene.build_scene`.
+        output_path: Path to write the rendered PNG to.
+    """
     reset_scene()
     add_earth(scene)
     add_sun(scene)
     add_atmosphere()
     add_camera(scene)
-    render(Path(args.output))
+    render(output_path)
 
 
-if __name__ == "__main__":
+def main() -> None:  # pragma: no cover
+    args = parse_args()
+    scene = json.loads(Path(args.scene).read_text())
+    render_scene(scene, Path(args.output))
+
+
+if __name__ == "__main__":  # pragma: no cover
     main()

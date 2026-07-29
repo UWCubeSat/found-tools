@@ -17,6 +17,9 @@ scripts/
 *.csv
 *.png
 
+# downloaded render textures (see src/found_tools/render/README.md)
+textures/
+
 # Debugging files
 .vscode/
 launch.json
