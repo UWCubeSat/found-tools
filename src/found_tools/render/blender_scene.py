@@ -124,8 +124,9 @@ def add_sun(scene: dict) -> None:
     )
 
 
-def add_atmosphere() -> None:
-    """Adds a limb-glow shell around the Earth and a black deep-space background.
+def add_atmosphere(scene: dict) -> None:
+    """Adds a sun-facing limb-glow shell around the Earth and a black
+    deep-space background.
 
     An earlier version of this function used Blender's Sky Texture node
     (Nishita / Multiple Scattering) as the World background. That node
@@ -135,12 +136,24 @@ def add_atmosphere() -> None:
     with its own bright, independent sun disc unrelated to this scene's
     Sun lamp, which is what was blowing out half the frame to white.
 
-    Instead: keep the World background black (deep space) and fake the
-    atmosphere with a Fresnel-driven emission shader on a shell slightly
-    larger than the Earth mesh. Fresnel makes the glow strongest at grazing
-    viewing angles -- i.e. right at the limb -- and fall off to transparent
-    toward the center of the visible disk, which is the actual effect we
-    want for limb-glow/terminator softening in a from-space view.
+    A later version fixed that by moving the glow onto a shell around the
+    Earth, but drove it from view-angle Fresnel alone -- which makes every
+    point of the limb glow equally regardless of where the Sun actually is,
+    i.e. a uniform white ring even on the shell's night side. Real
+    atmospheric limb glow only happens where the atmosphere is actually
+    sunlit: it's brightest at the sunlit limb, warms toward orange right at
+    the terminator (longer light path through the atmosphere, like a sunset
+    on the ground), and is essentially dark on the night side. So the glow
+    here is masked by the same Sun vector already used for the Sun lamp
+    (dot(surface normal, sun direction)), in addition to the view-angle
+    Fresnel term that concentrates it at the limb:
+
+    - Fresnel (grazing view angle) shapes *where on the sphere* the shell
+      is visible at all -- the limb, not the disk center.
+    - The sun-facing term (surface normal vs. Sun direction) masks that
+      down to the sunlit crescent, fading to zero on the night side, and
+      drives a colour ramp from warm orange near the terminator to blue on
+      the fully sunlit side.
     """
     world = bpy.data.worlds.new("SpaceWorld")
     bpy.context.scene.world = world
@@ -163,14 +176,70 @@ def add_atmosphere() -> None:
     links = material.node_tree.links
     nodes.clear()
 
+    sun_direction = np.asarray(scene["sun_vector_ecef"], dtype=np.float64)
+    sun_direction = sun_direction / np.linalg.norm(sun_direction)
+
     output = nodes.new("ShaderNodeOutputMaterial")
     mix_shader = nodes.new("ShaderNodeMixShader")
     transparent = nodes.new("ShaderNodeBsdfTransparent")
     emission = nodes.new("ShaderNodeEmission")
-    emission.inputs["Color"].default_value = (0.35, 0.55, 1.0, 1.0)
-    emission.inputs["Strength"].default_value = 2.5
+
+    # View-angle term: concentrates the shell's visibility at the limb.
     fresnel = nodes.new("ShaderNodeFresnel")
     fresnel.inputs["IOR"].default_value = 1.2
+
+    # Sun-facing term: dot(surface normal, Sun direction), so the glow is
+    # masked to the sunlit side regardless of where the camera is looking
+    # from. The Geometry node's Normal output is in world space, which is
+    # the same ECEF frame sun_vector_ecef is expressed in, so no extra
+    # transform is needed.
+    geometry = nodes.new("ShaderNodeNewGeometry")
+    sun_dir_node = nodes.new("ShaderNodeCombineXYZ")
+    sun_dir_node.inputs["X"].default_value = float(sun_direction[0])
+    sun_dir_node.inputs["Y"].default_value = float(sun_direction[1])
+    sun_dir_node.inputs["Z"].default_value = float(sun_direction[2])
+    sun_dot = nodes.new("ShaderNodeVectorMath")
+    sun_dot.operation = "DOT_PRODUCT"
+    links.new(geometry.outputs["Normal"], sun_dot.inputs[0])
+    links.new(sun_dir_node.outputs["Vector"], sun_dot.inputs[1])
+
+    # Fade the glow in just before the terminator and fully in by a bit
+    # past it, instead of a hard day/night cutoff (real atmospheric glow
+    # is visible somewhat into twilight).
+    day_factor = nodes.new("ShaderNodeMapRange")
+    day_factor.clamp = True
+    day_factor.inputs["From Min"].default_value = -0.15
+    day_factor.inputs["From Max"].default_value = 0.25
+    links.new(sun_dot.outputs["Value"], day_factor.inputs["Value"])
+
+    # Colour: warm orange right at the terminator (long path through the
+    # atmosphere, like a sunset), shifting to blue further into daylight
+    # (shorter, bluer-scattering path), independent of the glow's
+    # brightness envelope above.
+    color_mix = nodes.new("ShaderNodeMapRange")
+    color_mix.clamp = True
+    color_mix.inputs["From Min"].default_value = -0.3
+    color_mix.inputs["From Max"].default_value = 0.3
+    links.new(sun_dot.outputs["Value"], color_mix.inputs["Value"])
+
+    color_ramp = nodes.new("ShaderNodeValToRGB")
+    color_ramp.color_ramp.elements[0].position = 0.0
+    color_ramp.color_ramp.elements[0].color = (1.0, 0.55, 0.25, 1.0)
+    color_ramp.color_ramp.elements[1].position = 1.0
+    color_ramp.color_ramp.elements[1].color = (0.35, 0.55, 1.0, 1.0)
+    links.new(color_mix.outputs["Result"], color_ramp.inputs["Fac"])
+    links.new(color_ramp.outputs["Color"], emission.inputs["Color"])
+
+    glow_factor = nodes.new("ShaderNodeMath")
+    glow_factor.operation = "MULTIPLY"
+    links.new(fresnel.outputs["Fac"], glow_factor.inputs[0])
+    links.new(day_factor.outputs["Result"], glow_factor.inputs[1])
+
+    glow_strength = nodes.new("ShaderNodeMath")
+    glow_strength.operation = "MULTIPLY"
+    glow_strength.inputs[1].default_value = 6.0
+    links.new(glow_factor.outputs["Value"], glow_strength.inputs[0])
+    links.new(glow_strength.outputs["Value"], emission.inputs["Strength"])
 
     links.new(fresnel.outputs["Fac"], mix_shader.inputs["Fac"])
     links.new(transparent.outputs["BSDF"], mix_shader.inputs[1])
@@ -253,7 +322,7 @@ def render_scene(scene: dict, output_path: Path) -> None:
     reset_scene()
     add_earth(scene)
     add_sun(scene)
-    add_atmosphere()
+    add_atmosphere(scene)
     add_camera(scene)
     render(output_path)
 
