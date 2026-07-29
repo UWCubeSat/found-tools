@@ -13,7 +13,7 @@ class Camera:
     """Simple pinhole camera model with public camera parameters."""
 
     @classmethod
-    def from_row(cls, row: pd.Series) -> "Camera":  # pragma: no cover
+    def from_row(cls, row: pd.Series) -> Camera:  # pragma: no cover
         """Build a Camera from a single row of the simulation/orchestrate DataFrame.
 
         Row must contain: cam_focal_length, cam_x_pixel_pitch, cam_y_pixel_pitch,
@@ -34,14 +34,16 @@ class Camera:
         focal_length: float,
         x_pixel_pitch: float,
         x_resolution: int,
-        y_resolution: int,
+        y_resolution: int | None = None,
         x_center: float | None = None,
         y_center: float | None = None,
         y_pixel_pitch: float | None = None,
     ) -> None:
         self.focal_length = float(focal_length)
         self.x_resolution = int(x_resolution)
-        self.y_resolution = int(y_resolution)
+        self.y_resolution = (
+            int(y_resolution) if y_resolution is not None else int(x_resolution)
+        )
         self.x_center = self.x_resolution / 2.0 if x_center is None else float(x_center)
         self.y_center = self.y_resolution / 2.0 if y_center is None else float(y_center)
         self.x_pixel_pitch = float(x_pixel_pitch)
