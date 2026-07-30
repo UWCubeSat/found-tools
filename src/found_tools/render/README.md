@@ -1,18 +1,20 @@
 # Render
 
-The `render` tool generates synthetic Earth-limb test imagery for `EarthLim`
-and similar attitude-determination tools in [found](https://github.com/UWCubeSat/found).
+The `render` tool generates synthetic Earth test imagery for `EarthLim` and
+similar attitude-determination tools in [found](https://github.com/UWCubeSat/found).
 It computes Sun/camera geometry for a given date, position, and attitude,
 then drives a headless Blender scene to produce a physically-plausible
 rendered image: a WGS84-ellipsoid Earth with a cloud layer, a Sun lamp along
-the computed Sun vector, and a sun-facing atmosphere glow shell for limb
-glow and terminator softening.
+the computed Sun vector, and a black deep-space background.
 
-The Earth mesh (and the concentric cloud/atmosphere shells) are built as
-WGS84 ellipsoids -- equatorial radius 6,378,137 m, polar radius
-6,356,752.314245 m (flattening ~1/298.257) -- not spheres. The ~21 km
-difference is small next to Earth's radius but matters for accurate
-limb-fitting.
+The Earth mesh (and the concentric cloud shell) are built as WGS84
+ellipsoids -- equatorial radius 6,378,137 m, polar radius 6,356,752.314245 m
+(flattening ~1/298.257) -- not spheres. The ~21 km difference is small next
+to Earth's radius but matters for accurate limb-fitting.
+
+**Not yet implemented**: an atmosphere/limb-glow effect. An earlier version
+of this tool had a shell-based glow effect, but it was removed for now --
+see git history on this file/`blender_scene.py` if picking that back up.
 
 ## How it works
 
@@ -118,6 +120,3 @@ margin.
   next to `--output`).
 - `--render`: Actually build and render the scene with `bpy`. Without it,
   only the scene JSON is written.
-- `--no-atmosphere`: Skip the atmosphere limb-glow shell, rendering just
-  the Earth, clouds, and lighting. The Earth's WGS84 shape and the black
-  deep-space background are unaffected.

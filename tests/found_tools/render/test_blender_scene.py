@@ -8,7 +8,6 @@ from found_tools.render import blender_scene
 from found_tools.render.blender_scene import (
     WGS84_EQUATORIAL_RADIUS_M,
     WGS84_POLAR_RADIUS_M,
-    add_atmosphere_glow,
     add_camera,
     add_earth,
     add_space_background,
@@ -146,83 +145,6 @@ def test_add_space_background_sets_black_background():
     assert tuple(background.inputs["Color"].default_value) == (0.0, 0.0, 0.0, 1.0)
 
 
-def test_add_atmosphere_glow_creates_shell(scene):
-    add_atmosphere_glow(scene)
-
-    assert "Atmosphere" in bpy.data.objects
-    shell = bpy.data.objects["Atmosphere"]
-    material = shell.data.materials[0]
-    node_types = {node.bl_idname for node in material.node_tree.nodes}
-    assert "ShaderNodeFresnel" in node_types
-    assert all(polygon.use_smooth for polygon in shell.data.polygons)
-    assert "ShaderNodeEmission" in node_types
-    assert "ShaderNodeBsdfTransparent" in node_types
-
-
-def test_add_atmosphere_glow_shell_shares_earths_flattening(scene):
-    add_atmosphere_glow(scene)
-
-    equatorial, polar = _bounding_radii(bpy.data.objects["Atmosphere"])
-    expected_ratio = WGS84_POLAR_RADIUS_M / WGS84_EQUATORIAL_RADIUS_M
-    assert polar / equatorial == pytest.approx(expected_ratio, rel=1e-6)
-
-
-def test_add_atmosphere_glow_is_masked_by_sun_direction(scene):
-    # The glow's brightness/colour must depend on the same Sun direction
-    # used for the Sun lamp, not view-angle Fresnel alone -- otherwise the
-    # shell renders as a uniform white ring regardless of where the Sun is.
-    add_atmosphere_glow(scene)
-
-    material = bpy.data.objects["Atmosphere"].data.materials[0]
-    nodes = material.node_tree.nodes
-    node_types = {node.bl_idname for node in nodes}
-    assert "ShaderNodeNewGeometry" in node_types
-    assert "ShaderNodeVectorMath" in node_types
-    assert "ShaderNodeValToRGB" in node_types
-
-    sun_dir_node = next(n for n in nodes if n.bl_idname == "ShaderNodeCombineXYZ")
-    assert (
-        sun_dir_node.inputs["X"].default_value,
-        sun_dir_node.inputs["Y"].default_value,
-        sun_dir_node.inputs["Z"].default_value,
-    ) == pytest.approx(tuple(scene["sun_vector_ecef"]))
-
-    dot_node = next(
-        n
-        for n in nodes
-        if n.bl_idname == "ShaderNodeVectorMath" and n.operation == "DOT_PRODUCT"
-    )
-    geometry_node = next(n for n in nodes if n.bl_idname == "ShaderNodeNewGeometry")
-    assert dot_node.inputs[0].links[0].from_node == geometry_node
-    assert dot_node.inputs[1].links[0].from_node == sun_dir_node
-
-    emission = next(n for n in nodes if n.bl_idname == "ShaderNodeEmission")
-    # Strength must be driven by the shader graph (Fresnel * sun-facing
-    # factor), not left at a flat, direction-independent constant.
-    assert emission.inputs["Strength"].links
-    color_ramp = next(n for n in nodes if n.bl_idname == "ShaderNodeValToRGB")
-    assert emission.inputs["Color"].links[0].from_node == color_ramp
-    # Warm near the terminator, blue further into daylight.
-    assert tuple(color_ramp.color_ramp.elements[0].color) == pytest.approx(
-        (1.0, 0.55, 0.25, 1.0)
-    )
-    assert tuple(color_ramp.color_ramp.elements[1].color) == pytest.approx(
-        (0.35, 0.55, 1.0, 1.0)
-    )
-
-
-def test_add_atmosphere_glow_normalizes_sun_vector(scene):
-    scene["sun_vector_ecef"] = [2.0, 0.0, 0.0]
-
-    add_atmosphere_glow(scene)
-
-    material = bpy.data.objects["Atmosphere"].data.materials[0]
-    sun_dir_node = next(
-        n for n in material.node_tree.nodes if n.bl_idname == "ShaderNodeCombineXYZ"
-    )
-    assert sun_dir_node.inputs["X"].default_value == pytest.approx(1.0)
-
-
 def test_add_camera_sets_intrinsics_resolution_and_pose(scene):
     add_camera(scene)
 
@@ -296,37 +218,9 @@ def test_render_scene_builds_scene_and_calls_render(monkeypatch, scene, tmp_path
 
     assert "Earth" in bpy.data.objects
     assert "Sun" in bpy.data.objects
-    assert "Atmosphere" in bpy.data.objects
     assert bpy.context.scene.camera is not None
-    assert bpy.context.scene.world is not None
-    assert calls == [output_path]
-
-
-def test_render_scene_skips_atmosphere_glow_shell_when_disabled(
-    monkeypatch, scene, tmp_path
-):
-    monkeypatch.setattr(blender_scene, "render", lambda output_path: None)
-    scene["atmosphere_glow_enabled"] = False
-
-    render_scene(scene, tmp_path / "render.png")
-
-    assert "Earth" in bpy.data.objects
-    assert "Atmosphere" not in bpy.data.objects
-    # Disabling the glow shell shouldn't affect the black deep-space
-    # background.
     world = bpy.context.scene.world
     assert world is not None
     background = world.node_tree.nodes["Background"]
     assert tuple(background.inputs["Color"].default_value) == (0.0, 0.0, 0.0, 1.0)
-
-
-def test_render_scene_adds_atmosphere_glow_shell_by_default(monkeypatch, scene):
-    # scene fixtures built via found_tools.render.scene.build_scene always
-    # set this key, but blender_scene.render_scene should default to
-    # enabling the glow shell even if a hand-built scene dict omits it.
-    monkeypatch.setattr(blender_scene, "render", lambda output_path: None)
-    scene.pop("atmosphere_glow_enabled", None)
-
-    render_scene(scene, Path("render.png"))
-
-    assert "Atmosphere" in bpy.data.objects
+    assert calls == [output_path]

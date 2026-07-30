@@ -32,25 +32,11 @@ def test_build_scene_contains_expected_top_level_keys(camera):
         "camera",
         "earth",
         "image",
-        "atmosphere_glow_enabled",
     }
     assert scene["date"] == WHEN.isoformat()
     assert scene["earth"]["blue_marble_filename"] == "world.200403.3x5400x2700.jpg"
     assert scene["earth"]["texture_dir"] == "/textures"
     assert scene["image"] == {"width": 1920, "height": 1080}
-    assert scene["atmosphere_glow_enabled"] is True
-
-
-def test_build_scene_can_disable_atmosphere_glow(camera):
-    scene = build_scene(
-        when=WHEN,
-        camera=camera,
-        camera_position_ecef_m=np.array([7_000_000.0, 0.0, 0.0]),
-        camera_attitude_ecef_to_camera=DCM(),
-        atmosphere_glow_enabled=False,
-    )
-
-    assert scene["atmosphere_glow_enabled"] is False
 
 
 def test_build_scene_normalizes_naive_datetime(camera):
