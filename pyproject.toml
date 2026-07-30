@@ -1,10 +1,11 @@
 [project]
 name = "found-tools"
-version = "0.0.0"
+version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = [
+    "bpy>=5.1.0",
     "matplotlib>=3.10",
     "numpy>=2.0",
     "opencv-python>=4.13.0.92",
@@ -16,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 found_tools_attitude = "found_tools.calibrate.main:main"
+found_tools_render = "found_tools.render.main:main"
 
 [dependency-groups]
 dev = ["pytest", "coverage"]
@@ -41,3 +43,6 @@ exclude_lines = [
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+
+[tool.ty.src]
+exclude = ["src/found_tools/render/blender_scene.py"]
