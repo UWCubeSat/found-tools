@@ -78,6 +78,13 @@ def parse_args() -> argparse.Namespace:  # pragma: no cover
         "the scene JSON is written (useful for inspecting geometry without "
         "waiting on a render).",
     )
+    parser.add_argument(
+        "--no-atmosphere",
+        action="store_true",
+        help="Skip the atmosphere limb-glow shell, rendering just the Earth, "
+        "clouds, and lighting. The Earth's shape and the black deep-space "
+        "background are unaffected.",
+    )
 
     return parser.parse_args()
 
@@ -111,6 +118,7 @@ def build_scene_from_args(args: argparse.Namespace) -> dict:
         camera_position_ecef_m=position,
         camera_attitude_ecef_to_camera=attitude,
         texture_dir=args.texture_dir,
+        atmosphere_glow_enabled=not args.no_atmosphere,
     )
 
 

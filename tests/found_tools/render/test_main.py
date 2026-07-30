@@ -19,6 +19,7 @@ def make_args(**overrides) -> argparse.Namespace:
         texture_dir="/textures",
         output="render.png",
         scene_file=None,
+        no_atmosphere=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -38,6 +39,18 @@ def test_build_scene_from_args_defaults_naive_date_to_utc():
     scene = build_scene_from_args(make_args(date="2026-03-20T12:00:00"))
 
     assert scene["date"].endswith("+00:00")
+
+
+def test_build_scene_from_args_enables_atmosphere_glow_by_default():
+    scene = build_scene_from_args(make_args())
+
+    assert scene["atmosphere_glow_enabled"] is True
+
+
+def test_build_scene_from_args_no_atmosphere_disables_glow():
+    scene = build_scene_from_args(make_args(no_atmosphere=True))
+
+    assert scene["atmosphere_glow_enabled"] is False
 
 
 def test_resolve_scene_file_uses_explicit_scene_file():

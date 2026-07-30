@@ -32,6 +32,7 @@ def build_scene(
     image_width: int = DEFAULT_IMAGE_WIDTH,
     image_height: int = DEFAULT_IMAGE_HEIGHT,
     texture_dir: Optional[str] = None,
+    atmosphere_glow_enabled: bool = True,
 ) -> dict:
     """Builds a JSON-serializable scene description.
 
@@ -49,6 +50,10 @@ def build_scene(
         texture_dir: Optional directory containing downloaded texture
             assets; stored in the scene so blender_scene.py can resolve
             texture files without recomputing filenames.
+        atmosphere_glow_enabled: Whether blender_scene.py should add the
+            sun-facing atmosphere limb-glow shell. The Earth mesh, its
+            lighting, and the black deep-space background are unaffected --
+            this only toggles the glow shell itself.
 
     Returns:
         dict: A JSON-serializable scene description.
@@ -83,6 +88,7 @@ def build_scene(
             "width": image_width,
             "height": image_height,
         },
+        "atmosphere_glow_enabled": atmosphere_glow_enabled,
     }
 
 

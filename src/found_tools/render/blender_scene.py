@@ -19,13 +19,51 @@ import numpy as np
 
 import bpy  # ty: ignore[unresolved-import]
 
-EARTH_RADIUS_M = 6_378_137.0
+# WGS84 semi-major (equatorial) and semi-minor (polar) axes. The ~21 km
+# difference (flattening ~1/298.257) is small relative to Earth's radius but
+# matters for accurate limb-fitting, so the Earth mesh (and the concentric
+# cloud/atmosphere shells) are built as WGS84 ellipsoids, not spheres.
+WGS84_EQUATORIAL_RADIUS_M = 6_378_137.0
+WGS84_POLAR_RADIUS_M = 6_356_752.314245
 CLOUD_LAYER_ALTITUDE_M = 10_000.0
-# Atmosphere shell radius as a fraction of the Earth radius. Earth's
-# atmosphere is optically significant to roughly the stratopause (~50 km),
-# i.e. under 1% of the Earth's radius; a few percent gives a visible glow
-# without the shell reading as a separate, oversized sphere.
+# Atmosphere shell radius as a fraction of the Earth's equatorial radius.
+# Earth's atmosphere is optically significant to roughly the stratopause
+# (~50 km), i.e. under 1% of the Earth's radius; a few percent gives a
+# visible glow without the shell reading as a separate, oversized sphere.
 ATMOSPHERE_RADIUS_SCALE = 1.02
+
+
+def _add_wgs84_ellipsoid(
+    equatorial_radius: float, segments: int = 256, ring_count: int = 128
+):
+    """Adds a UV sphere scaled to a WGS84-flattened ellipsoid.
+
+    Blender's primitive_uv_sphere_add only creates true spheres. WGS84 models
+    Earth as an oblate spheroid: the polar radius is ~21 km smaller than the
+    equatorial radius (flattening ~1/298.257). Build a sphere with the given
+    equatorial radius (used for both the X and Y axes), then scale -- and
+    bake in -- its local Z axis (the same axis geometry.py's ECI/ECEF frames
+    use as Earth's rotation axis) down to the corresponding WGS84 polar
+    radius, so cloud/atmosphere shells built at a larger equatorial radius
+    stay concentric with, and share the flattening of, the Earth mesh.
+
+    Args:
+        equatorial_radius: Equatorial (X/Y) radius of the ellipsoid, meters.
+        segments: Longitude subdivisions, passed through to
+            primitive_uv_sphere_add.
+        ring_count: Latitude subdivisions, passed through to
+            primitive_uv_sphere_add.
+
+    Returns:
+        The newly created (and active) ellipsoid object.
+    """
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        radius=equatorial_radius, segments=segments, ring_count=ring_count
+    )
+    obj = bpy.context.active_object
+    obj.scale.z = WGS84_POLAR_RADIUS_M / WGS84_EQUATORIAL_RADIUS_M
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    return obj
 
 
 def parse_args() -> argparse.Namespace:  # pragma: no cover
@@ -52,10 +90,7 @@ def add_earth(scene: dict) -> None:
     texture file exists in texture_dir, a cloud layer."""
     texture_dir = Path(scene["earth"]["texture_dir"])
 
-    bpy.ops.mesh.primitive_uv_sphere_add(
-        radius=EARTH_RADIUS_M, segments=256, ring_count=128
-    )
-    earth = bpy.context.active_object
+    earth = _add_wgs84_ellipsoid(WGS84_EQUATORIAL_RADIUS_M)
     earth.name = "Earth"
     # primitive_uv_sphere_add's mesh is flat-shaded by default: every quad
     # face has one constant normal, so despite the 256x128 subdivision the
@@ -81,11 +116,8 @@ def add_earth(scene: dict) -> None:
     if not cloud_layer_path.is_file():
         return
 
-    cloud_radius = EARTH_RADIUS_M + CLOUD_LAYER_ALTITUDE_M
-    bpy.ops.mesh.primitive_uv_sphere_add(
-        radius=cloud_radius, segments=256, ring_count=128
-    )
-    clouds = bpy.context.active_object
+    cloud_radius = WGS84_EQUATORIAL_RADIUS_M + CLOUD_LAYER_ALTITUDE_M
+    clouds = _add_wgs84_ellipsoid(cloud_radius)
     clouds.name = "CloudLayer"
     bpy.ops.object.shade_smooth()
 
@@ -124,29 +156,40 @@ def add_sun(scene: dict) -> None:
     )
 
 
-def add_atmosphere(scene: dict) -> None:
-    """Adds a sun-facing limb-glow shell around the Earth and a black
-    deep-space background.
+def add_space_background() -> None:
+    """Sets a black deep-space World background.
 
-    An earlier version of this function used Blender's Sky Texture node
+    An earlier version of this module used Blender's Sky Texture node
     (Nishita / Multiple Scattering) as the World background. That node
     models a ground-level sky dome as seen by an observer standing on the
     Earth's surface -- as a World background it lights the *entire*
     background sphere in every direction (not just near the Earth's limb)
     with its own bright, independent sun disc unrelated to this scene's
-    Sun lamp, which is what was blowing out half the frame to white.
+    Sun lamp, which is what was blowing out half the frame to white. A
+    plain black background is the physically correct choice for a
+    from-space view; the limb glow itself is added separately by
+    :func:`add_atmosphere_glow`.
+    """
+    world = bpy.data.worlds.new("SpaceWorld")
+    bpy.context.scene.world = world
+    world.use_nodes = True
+    background = world.node_tree.nodes["Background"]
+    background.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
 
-    A later version fixed that by moving the glow onto a shell around the
-    Earth, but drove it from view-angle Fresnel alone -- which makes every
-    point of the limb glow equally regardless of where the Sun actually is,
-    i.e. a uniform white ring even on the shell's night side. Real
-    atmospheric limb glow only happens where the atmosphere is actually
-    sunlit: it's brightest at the sunlit limb, warms toward orange right at
-    the terminator (longer light path through the atmosphere, like a sunset
-    on the ground), and is essentially dark on the night side. So the glow
-    here is masked by the same Sun vector already used for the Sun lamp
-    (dot(surface normal, sun direction)), in addition to the view-angle
-    Fresnel term that concentrates it at the limb:
+
+def add_atmosphere_glow(scene: dict) -> None:
+    """Adds a sun-facing limb-glow shell around the Earth.
+
+    An earlier version of this glow was driven by view-angle Fresnel alone
+    -- which makes every point of the limb glow equally regardless of where
+    the Sun actually is, i.e. a uniform white ring even on the shell's night
+    side. Real atmospheric limb glow only happens where the atmosphere is
+    actually sunlit: it's brightest at the sunlit limb, warms toward orange
+    right at the terminator (longer light path through the atmosphere, like
+    a sunset on the ground), and is essentially dark on the night side. So
+    the glow here is masked by the same Sun vector already used for the Sun
+    lamp (dot(surface normal, sun direction)), in addition to the
+    view-angle Fresnel term that concentrates it at the limb:
 
     - Fresnel (grazing view angle) shapes *where on the sphere* the shell
       is visible at all -- the limb, not the disk center.
@@ -155,16 +198,7 @@ def add_atmosphere(scene: dict) -> None:
       drives a colour ramp from warm orange near the terminator to blue on
       the fully sunlit side.
     """
-    world = bpy.data.worlds.new("SpaceWorld")
-    bpy.context.scene.world = world
-    world.use_nodes = True
-    background = world.node_tree.nodes["Background"]
-    background.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
-
-    bpy.ops.mesh.primitive_uv_sphere_add(
-        radius=EARTH_RADIUS_M * ATMOSPHERE_RADIUS_SCALE, segments=256, ring_count=128
-    )
-    shell = bpy.context.active_object
+    shell = _add_wgs84_ellipsoid(WGS84_EQUATORIAL_RADIUS_M * ATMOSPHERE_RADIUS_SCALE)
     shell.name = "Atmosphere"
     bpy.ops.object.shade_smooth()
 
@@ -269,7 +303,7 @@ def add_camera(scene: dict) -> None:
     # any orbit up to well past GEO.
     camera_altitude_m = float(np.linalg.norm(cam["position_ecef_m"]))
     cam_data.clip_start = 1.0
-    cam_data.clip_end = 4.0 * max(EARTH_RADIUS_M, camera_altitude_m)
+    cam_data.clip_end = 4.0 * max(WGS84_EQUATORIAL_RADIUS_M, camera_altitude_m)
 
     render = bpy.context.scene.render
     render.resolution_x = scene["image"]["width"]
@@ -322,7 +356,9 @@ def render_scene(scene: dict, output_path: Path) -> None:
     reset_scene()
     add_earth(scene)
     add_sun(scene)
-    add_atmosphere(scene)
+    add_space_background()
+    if scene.get("atmosphere_glow_enabled", True):
+        add_atmosphere_glow(scene)
     add_camera(scene)
     render(output_path)
 
