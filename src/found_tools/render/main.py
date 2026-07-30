@@ -1,6 +1,6 @@
 import argparse
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -101,7 +101,7 @@ def build_scene_from_args(args: argparse.Namespace) -> dict:
     """
     when = datetime.fromisoformat(args.date)
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
+        when = when.replace(tzinfo=UTC)
 
     camera = Camera(
         focal_length=args.focal_length,

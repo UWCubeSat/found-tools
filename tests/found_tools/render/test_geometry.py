@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -13,8 +13,8 @@ from found_tools.render.geometry import (
     to_julian_date,
 )
 
-J2000_EPOCH = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-J2000_EPOCH_NAIVE = datetime(2000, 1, 1, 12, 0, 0)
+J2000_EPOCH = datetime(2000, 1, 1, 12, 0, 0, tzinfo=UTC)
+J2000_EPOCH_NAIVE = datetime(2000, 1, 1, 12, 0, 0)  # noqa: DTZ001 -- deliberately naive
 
 
 def test_to_julian_date_at_j2000():
@@ -28,7 +28,7 @@ def test_to_julian_date_treats_naive_datetime_as_utc():
 
 
 def test_to_julian_date_one_day_later():
-    later = datetime(2000, 1, 2, 12, 0, 0, tzinfo=timezone.utc)
+    later = datetime(2000, 1, 2, 12, 0, 0, tzinfo=UTC)
     assert to_julian_date(later) == pytest.approx(2451546.0, abs=1e-9)
 
 
@@ -37,16 +37,16 @@ def test_days_since_j2000_at_epoch():
 
 
 def test_days_since_j2000_before_epoch():
-    earlier = datetime(1999, 12, 31, 12, 0, 0, tzinfo=timezone.utc)
+    earlier = datetime(1999, 12, 31, 12, 0, 0, tzinfo=UTC)
     assert days_since_j2000(earlier) == pytest.approx(-1.0, abs=1e-9)
 
 
 def test_sun_vector_eci_is_unit_length():
     for when in [
         J2000_EPOCH,
-        datetime(2026, 3, 20, 9, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 6, 21, 4, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 12, 21, 21, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 3, 20, 9, 0, 0, tzinfo=UTC),
+        datetime(2026, 6, 21, 4, 0, 0, tzinfo=UTC),
+        datetime(2026, 12, 21, 21, 0, 0, tzinfo=UTC),
     ]:
         vector = sun_vector_eci(when)
         assert np.linalg.norm(vector) == pytest.approx(1.0, abs=1e-6)
@@ -55,19 +55,19 @@ def test_sun_vector_eci_is_unit_length():
 def test_sun_vector_eci_near_summer_solstice_points_toward_positive_z():
     # Near the June solstice, the Sun's declination is close to its maximum
     # (~+23.4 deg), so the ECI z-component should be strongly positive.
-    when = datetime(2026, 6, 21, 4, 0, 0, tzinfo=timezone.utc)
+    when = datetime(2026, 6, 21, 4, 0, 0, tzinfo=UTC)
     vector = sun_vector_eci(when)
     assert vector[2] == pytest.approx(np.sin(np.deg2rad(23.4)), abs=0.02)
 
 
 def test_sun_vector_eci_near_winter_solstice_points_toward_negative_z():
-    when = datetime(2026, 12, 21, 21, 0, 0, tzinfo=timezone.utc)
+    when = datetime(2026, 12, 21, 21, 0, 0, tzinfo=UTC)
     vector = sun_vector_eci(when)
     assert vector[2] == pytest.approx(-np.sin(np.deg2rad(23.4)), abs=0.02)
 
 
 def test_sun_vector_eci_near_equinox_has_small_z_component():
-    when = datetime(2026, 3, 20, 9, 0, 0, tzinfo=timezone.utc)
+    when = datetime(2026, 3, 20, 9, 0, 0, tzinfo=UTC)
     vector = sun_vector_eci(when)
     assert abs(vector[2]) < 0.02
 
@@ -80,7 +80,7 @@ def test_gmst_radians_at_j2000_matches_known_value():
 
 
 def test_gmst_radians_is_wrapped_to_2pi():
-    for when in [J2000_EPOCH, datetime(2030, 6, 1, tzinfo=timezone.utc)]:
+    for when in [J2000_EPOCH, datetime(2030, 6, 1, tzinfo=UTC)]:
         theta = gmst_radians(when)
         assert 0.0 <= theta < 2 * np.pi
 
@@ -111,7 +111,7 @@ def test_sun_vector_ecef_is_unit_length():
 
 def test_sun_vector_ecef_z_component_matches_eci():
     # Rotation about Z leaves the Z component (declination-driven) unchanged.
-    when = datetime(2026, 6, 21, 4, 0, 0, tzinfo=timezone.utc)
+    when = datetime(2026, 6, 21, 4, 0, 0, tzinfo=UTC)
     eci = sun_vector_eci(when)
     ecef = sun_vector_ecef(when)
     assert ecef[2] == pytest.approx(eci[2], abs=1e-9)

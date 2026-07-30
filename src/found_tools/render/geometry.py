@@ -16,7 +16,7 @@ higher-precision ephemerides (e.g. planetary parallax), spiceypy or
 astropy.coordinates can be swapped in behind the same function signatures.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -38,8 +38,8 @@ def to_julian_date(when: datetime) -> float:
         float: The Julian Date.
     """
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    when = when.astimezone(timezone.utc)
+        when = when.replace(tzinfo=UTC)
+    when = when.astimezone(UTC)
 
     unix_epoch_jd = 2440587.5
     return unix_epoch_jd + when.timestamp() / 86400.0

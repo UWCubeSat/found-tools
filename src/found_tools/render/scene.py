@@ -8,9 +8,8 @@ tool that imports ``bpy``.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -31,7 +30,7 @@ def build_scene(
     camera_attitude_ecef_to_camera: DCM,
     image_width: int = DEFAULT_IMAGE_WIDTH,
     image_height: int = DEFAULT_IMAGE_HEIGHT,
-    texture_dir: Optional[str] = None,
+    texture_dir: str | None = None,
     atmosphere_glow_enabled: bool = True,
 ) -> dict:
     """Builds a JSON-serializable scene description.
@@ -59,14 +58,14 @@ def build_scene(
         dict: A JSON-serializable scene description.
     """
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
+        when = when.replace(tzinfo=UTC)
 
     sun_vector = sun_vector_ecef(when)
     position = np.asarray(camera_position_ecef_m, dtype=np.float64)
     rotation_matrix = camera_attitude_ecef_to_camera.rotation.as_matrix()
 
     return {
-        "date": when.astimezone(timezone.utc).isoformat(),
+        "date": when.astimezone(UTC).isoformat(),
         "sun_vector_ecef": sun_vector.tolist(),
         "camera": {
             "focal_length_m": camera.focal_length,

@@ -15,9 +15,8 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
-
 import bpy  # ty: ignore[unresolved-import]
+import numpy as np
 
 # WGS84 semi-major (equatorial) and semi-minor (polar) axes. The ~21 km
 # difference (flattening ~1/298.257) is small relative to Earth's radius but

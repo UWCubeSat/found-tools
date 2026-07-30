@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +9,7 @@ from found_tools.calibrate.transform import DCM
 from found_tools.render.scene import build_scene, write_scene
 from found_tools.utils._camera import Camera
 
-WHEN = datetime(2026, 3, 20, 12, 0, 0, tzinfo=timezone.utc)
+WHEN = datetime(2026, 3, 20, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def test_build_scene_can_disable_atmosphere_glow(camera):
 
 
 def test_build_scene_normalizes_naive_datetime(camera):
-    naive_when = datetime(2026, 3, 20, 12, 0, 0)
+    naive_when = datetime(2026, 3, 20, 12, 0, 0)  # noqa: DTZ001 -- deliberately naive
 
     scene = build_scene(
         when=naive_when,
